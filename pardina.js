@@ -28,6 +28,11 @@ window.addEventListener('load', () => {
         holdlists = {};
 
     addvan = van => {
+        if (!nval) {
+            alert('please set a name');
+            return'
+        }
+
         var vel = document.createElement('div');
         holdlists[van.vid] = van.holdlist;
 
@@ -56,6 +61,11 @@ window.addEventListener('load', () => {
     };
 
     updvan = van => {
+        if (!nval) {
+            alert('please set a name');
+            return'
+        }
+
         var vel = document.getElementById('van' + van.vid);
         holdlists[van.vid] = van.holdlist;
         vel.dataset.hasholds = van.holdlist.length ? 1 : 0;
