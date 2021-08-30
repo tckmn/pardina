@@ -100,7 +100,7 @@ class WebFrontend(Frontend):
     async def go(self):
         runner = web.ServerRunner(web.Server(self.handler))
         await runner.setup()
-        await web.TCPSite(runner, 'localhost', 1231).start()
+        await web.TCPSite(runner, '0.0.0.0', 1231).start()
         self.log('started')
 
     async def handler(self, req):
