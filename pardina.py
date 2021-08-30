@@ -49,7 +49,7 @@ class Frontend:
 
 class DiscordFrontend(Frontend, discord.Client):
     label = 'DISCORD'
-    cid = 696572772134158413
+    cid = 881689982635487314
     buses = list('🚌🚐🚎🚍')
     vans = {}
 
