@@ -30,7 +30,7 @@ window.addEventListener('load', () => {
     addvan = van => {
         if (!nval) {
             alert('please set a name');
-            return'
+            return;
         }
 
         var vel = document.createElement('div');
@@ -63,7 +63,7 @@ window.addEventListener('load', () => {
     updvan = van => {
         if (!nval) {
             alert('please set a name');
-            return'
+            return;
         }
 
         var vel = document.getElementById('van' + van.vid);
