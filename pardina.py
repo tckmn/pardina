@@ -175,6 +175,8 @@ class Backend():
         loop.run_forever()
 
     async def send_new_van(self, sender, desc, who):
+        # TODO error handling, here and below
+        if not desc: return
         van = Van(self.maxvid, desc, who)
         self.maxvid += 1
         await asyncio.gather(*(f.recv_new_van(van) for f in self.frontends))
@@ -183,7 +185,8 @@ class Backend():
         pass
 
     async def send_hold_van(self, sender, van, who, isadd):
-        if who in van.holdlist == isadd: return
+        if not who: return
+        if (who in van.holdlist) == isadd: return
         van.holdlist.append(who) if isadd else van.holdlist.remove(who)
         await asyncio.gather(*(f.recv_update_van(van) for f in self.frontends))
 
