@@ -33,6 +33,8 @@ class AutoVan:
         self.minute = minute
         self.desc = desc
         self.triggered = False
+    def __str__(self):
+        return f'{self.day} {self.hour} {self.minute} {self.desc}'
 
 
 class Frontend:
@@ -101,6 +103,13 @@ class DiscordFrontend(Frontend, discord.Client):
     async def admin_eval(self, args): return f'```\n{repr(eval(args))}\n```'
     async def admin_silent(self, args): self.silent = args == '1'; return f'silent: {self.silent}'
     async def admin_dump(self, args): return json.dumps([v.serialize() for v in self.backend.vans])
+
+    async def admin_schedule(self, args):
+        if args:
+            self.backend.auto.schedule = [(lambda a,b,c,d:AutoVan(int(a),int(b),int(c),d))(*line.split()) for line in args.split('\n')]
+            return 'new schedule set'
+        else:
+            return '```\n' + '\n'.join(map(str, self.backend.auto.schedule)) + '\n```'
 
 
 class WebFrontend(Frontend):
@@ -172,10 +181,13 @@ class AutoFrontend(Frontend):
 
 class Backend():
     def __init__(self):
+        self.discord = DiscordFrontend()
+        self.web = WebFrontend()
+        self.auto = AutoFrontend()
         self.frontends = [ 0
-                         , DiscordFrontend()
-                         , WebFrontend()
-                         , AutoFrontend()
+                         , self.discord
+                         , self.web
+                         , self.auto
                          ][1:]
         self.maxvid = 0
         self.vans = []
