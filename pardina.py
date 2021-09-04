@@ -70,9 +70,9 @@ class DiscordFrontend(Frontend, discord.Client):
 
     async def on_message(self, message):
         if message.author.id in self.admin and message.content.startswith('!'):
-            cmd, args = message.content[1:].split(None, 1)
+            cmd, *args = message.content[1:].split(None, 1)
             if hasattr(self, f'admin_{cmd}'):
-                await message.channel.send(await getattr(self, f'admin_{cmd}')(args) or '[done]')
+                await message.channel.send(await getattr(self, f'admin_{cmd}')(args[0] if args else None) or '[done]')
                 return
 
         if message.author == self.user or message.channel.id not in [self.cid_pub, self.cid_debug]: return
@@ -100,6 +100,7 @@ class DiscordFrontend(Frontend, discord.Client):
 
     async def admin_eval(self, args): return f'```\n{repr(eval(args))}\n```'
     async def admin_silent(self, args): self.silent = args == '1'; return f'silent: {self.silent}'
+    async def admin_dump(self, args): return json.dumps([v.serialize() for v in self.backend.vans])
 
 
 class WebFrontend(Frontend):
