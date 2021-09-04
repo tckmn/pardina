@@ -49,9 +49,10 @@ class Frontend:
 
 class DiscordFrontend(Frontend, discord.Client):
     label = 'DISCORD'
-    cid = 881689982635487314
+    cid_pub = 881689982635487314
+    cid_debug = 883708092603326505
+    admin = [133105865908682752]
     buses = list('🚌🚐🚎🚍')
-    vans = {}
 
     def uname(self, user): return user.name
     def fmt(self, van):
@@ -63,11 +64,18 @@ class DiscordFrontend(Frontend, discord.Client):
         return await self.start(open('token').read())
 
     async def on_ready(self):
+        self.channel_pub = self.get_channel(self.cid_pub)
+        self.channel_debug = self.get_channel(self.cid_debug)
         self.log('started')
 
     async def on_message(self, message):
-        if message.author == self.user or message.channel.id != self.cid: return
-        self.channel = message.channel
+        if message.author.id in self.admin and message.content.startswith('!'):
+            cmd, args = message.content[1:].split(None, 1)
+            if hasattr(self, f'admin_{cmd}'):
+                await message.channel.send(await getattr(self, f'admin_{cmd}')(args) or '[done]')
+                return
+
+        if message.author == self.user or message.channel.id not in [self.cid_pub, self.cid_debug]: return
 
         if message.content.lower().startswith('van'):
             await self.send_new_van(re.sub(r'(?i)^van[: ]*', '', message.content) or '(no description)', self.uname(message.author))
@@ -77,24 +85,28 @@ class DiscordFrontend(Frontend, discord.Client):
     async def on_raw_reaction_remove(self, ev): await self.on_react(ev, False)
 
     async def on_react(self, ev, isadd):
-        if ev.user_id == self.user.id or ev.message_id not in self.vans or ev.emoji.name not in self.buses: return
-        await self.send_hold_van(self.vans[ev.message_id], self.uname(await self.fetch_user(ev.user_id)), isadd)
+        if ev.user_id == self.user.id or ev.emoji.name not in self.buses: return
+        v = self.backend.by_id(ev.message_id)
+        if not v: return
+        await self.send_hold_van(v, self.uname(await self.fetch_user(ev.user_id)), isadd)
 
     async def recv_new_van(self, van):
-        van.msg = await self.channel.send(self.fmt(van))
-        self.vans[van.msg.id] = van
+        ch = self.channel_debug if self.silent else self.channel_pub
+        van.msg = await ch.send(self.fmt(van))
         await van.msg.add_reaction(random.choice(self.buses))
 
     async def recv_update_van(self, van):
         await van.msg.edit(content=self.fmt(van))
 
+    async def admin_eval(self, args): return f'```\n{repr(eval(args))}\n```'
+    async def admin_silent(self, args): self.silent = args == '1'; return f'silent: {self.silent}'
+
 
 class WebFrontend(Frontend):
     label = 'WEB'
-    page = re.sub(r'\{\{([^}]*)\}\}', lambda m: open(m.group(1)).read(), open('pardina.html').read())
+    page = lambda *_: re.sub(r'\{\{([^}]*)\}\}', lambda m: open(m.group(1)).read(), open('pardina.html').read())
 
     def __init__(self):
-        self.vans = []
         self.ws = []
 
     async def go(self):
@@ -112,22 +124,21 @@ class WebFrontend(Frontend):
             self.ws.append(ws)
             await ws.send_str(json.dumps({
                 'type': 'set',
-                'vans': [v.serialize() for v in self.vans]
+                'vans': [v.serialize() for v in self.backend.vans]
             }))
             async for msg in ws:
                 data = json.loads(msg.data)
                 if data['type'] == 'hold':
-                    await self.send_hold_van(next(v for v in self.vans if v.vid == data['vid']), data['who'], data['isadd'])
+                    await self.send_hold_van(next(v for v in self.backend.vans if v.vid == data['vid']), data['who'], data['isadd'])
             self.ws.remove(ws)
             return
 
         if req.method == 'GET':
-            return web.Response(text=self.page, content_type='text/html')
+            return web.Response(text=self.page(), content_type='text/html')
 
         return web.Response(text='hi')
 
     async def recv_new_van(self, van):
-        self.vans.append(van)
         await asyncio.gather(*(ws.send_str(json.dumps({
             'type': 'add', 'van': van.serialize()
         })) for ws in self.ws))
@@ -166,6 +177,7 @@ class Backend():
                          , AutoFrontend()
                          ][1:]
         self.maxvid = 0
+        self.vans = []
 
     def go(self):
         loop = asyncio.get_event_loop()
@@ -174,10 +186,14 @@ class Backend():
             loop.create_task(f.go())
         loop.run_forever()
 
+    def by_id(self, msgid):
+        return next((v for v in self.vans if v.msg.id == msgid), None)
+
     async def send_new_van(self, sender, desc, who):
         # TODO error handling, here and below
         if not desc: return
         van = Van(self.maxvid, desc, who)
+        self.vans.append(van)
         self.maxvid += 1
         await asyncio.gather(*(f.recv_new_van(van) for f in self.frontends))
 
