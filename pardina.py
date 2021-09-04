@@ -69,8 +69,8 @@ class DiscordFrontend(Frontend, discord.Client):
         if message.author == self.user or message.channel.id != self.cid: return
         self.channel = message.channel
 
-        if message.content.startswith('van'):
-            await self.send_new_van(re.sub(r'^van[: ]*', '', message.content) or '(no description)', self.uname(message.author))
+        if message.content.lower().startswith('van'):
+            await self.send_new_van(re.sub(r'(?i)^van[: ]*', '', message.content) or '(no description)', self.uname(message.author))
             await message.delete()
 
     async def on_raw_reaction_add(self, ev): await self.on_react(ev, True)
