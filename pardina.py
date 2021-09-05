@@ -14,16 +14,17 @@ MON, TUE, WED, THU, FRI, SAT, SUN = range(7)
 
 
 class Van:
-    def __init__(self, vid, desc, who, holdlist=None):
+    def __init__(self, vid, desc, who, holdlist=None, msgid=None):
         self.vid = vid
         self.desc = desc
         self.who = who
         self.holdlist = holdlist or []
+        self.msgid = msgid
     def holds(self): return ', '.join(self.holdlist)
-    def serialize(self):
-        return { 'vid': self.vid, 'desc': self.desc, 'who': self.who, 'holdlist': self.holdlist }
+    def serialize(self, full=False):
+        return { 'vid': self.vid, 'desc': self.desc, 'who': self.who, 'holdlist': self.holdlist, **({ 'msgid': self.msg.id } if full and hasattr(self, 'msg') else {}) }
     def deserialize(obj):
-        return Van(obj['vid'], obj['desc'], obj['who'], obj['holdlist'])
+        return Van(obj['vid'], obj['desc'], obj['who'], obj['holdlist'], obj['msgid'])
 
 
 class AutoVan:
@@ -63,6 +64,7 @@ class DiscordFrontend(Frontend, discord.Client):
             (f' holding for **{emd(van.holds())}**' if van.holdlist else '')
 
     async def go(self):
+        self.silent = False
         return await self.start(open('token').read())
 
     async def on_ready(self):
