@@ -8,7 +8,11 @@ import json
 import random
 import re
 
-def log(label, msg): print(f'{datetime.now().strftime("%F %T")} [{label}] {msg}')
+logfile = open('log', 'a')
+def log(label, msg):
+    s = f'{datetime.now().strftime("%F %T")} [{label}] {msg}'
+    print(s)
+    print(s, file=logfile, flush=True)
 emd = discord.utils.escape_markdown
 MON, TUE, WED, THU, FRI, SAT, SUN = range(7)
 
