@@ -70,6 +70,7 @@ class DiscordFrontend(Frontend, discord.Client):
     async def on_ready(self):
         self.channel_pub = self.get_channel(self.cid_pub)
         self.channel_debug = self.get_channel(self.cid_debug)
+        await self.backend.load()
         self.log('started')
 
     async def on_message(self, message):
@@ -103,12 +104,13 @@ class DiscordFrontend(Frontend, discord.Client):
         await van.msg.edit(content=self.fmt(van))
 
     async def admin_eval(self, args): return f'```\n{repr(eval(args))}\n```'
+    async def admin_await(self, args): return f'```\n{repr(await eval(args))}\n```'
     async def admin_silent(self, args): self.silent = args == '1'; return f'silent: {self.silent}'
     async def admin_dump(self, args): return json.dumps([v.serialize() for v in self.backend.vans])
 
     async def admin_schedule(self, args):
         if args:
-            self.backend.auto.schedule = [(lambda a,b,c,d:AutoVan(int(a),int(b),int(c),d))(*line.split()) for line in args.split('\n')]
+            self.backend.auto.read_schedule(args)
             return 'new schedule set'
         else:
             return '```\n' + '\n'.join(map(str, self.backend.auto.schedule)) + '\n```'
@@ -163,9 +165,12 @@ class WebFrontend(Frontend):
 
 class AutoFrontend(Frontend):
     label = 'AUTO'
-    schedule = [
-        # AutoVan(SUN, 5, 7, '17R')
-    ]
+
+    def __init__(self):
+        self.read_schedule()
+
+    def read_schedule(self, sched=None):
+        self.schedule = [(lambda a,b,c,d:AutoVan(int(a),int(b),int(c),d))(*line.split()) for line in (sched or open('schedule').read()).split('\n') if line.strip()]
 
     async def go(self):
         self.log('started')
@@ -182,6 +187,8 @@ class AutoFrontend(Frontend):
 
 
 class Backend():
+    def log(self, msg): log('backend', msg)
+
     def __init__(self):
         self.discord = DiscordFrontend()
         self.web = WebFrontend()
@@ -201,25 +208,39 @@ class Backend():
             loop.create_task(f.go())
         loop.run_forever()
 
+    def save(self):
+        with open('db', 'w') as f: json.dump([v.serialize(True) for v in self.vans], f)
+
+    async def load(self):
+        with open('db') as f:
+            self.vans = [Van.deserialize(v) for v in json.load(f)]
+            for v in self.vans:
+                v.msg = await self.discord.channel_pub.fetch_message(v.msgid)
+
     def by_id(self, msgid):
         return next((v for v in self.vans if v.msg.id == msgid), None)
 
     async def send_new_van(self, sender, desc, who):
+        self.log(f'new: {sender.label}; {desc}; {who}')
         # TODO error handling, here and below
         if not desc: return
         van = Van(self.maxvid, desc, who)
         self.vans.append(van)
         self.maxvid += 1
         await asyncio.gather(*(f.recv_new_van(van) for f in self.frontends))
+        self.save()
 
     async def send_del_van(self, sender, vid):
-        pass
+        self.log(f'del: {sender.label}; {vid}')
+        self.save()
 
     async def send_hold_van(self, sender, van, who, isadd):
+        self.log(f'hold: {sender.label}; {van.vid}; {who}; {isadd}')
         if not who: return
         if (who in van.holdlist) == isadd: return
         van.holdlist.append(who) if isadd else van.holdlist.remove(who)
         await asyncio.gather(*(f.recv_update_van(van) for f in self.frontends))
+        self.save()
 
 
 Backend().go()
