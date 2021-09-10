@@ -15,6 +15,7 @@ def log(label, msg):
     print(s, file=logfile, flush=True)
 emd = discord.utils.escape_markdown
 MON, TUE, WED, THU, FRI, SAT, SUN = range(7)
+WHERE_IS_THE_VAN = 0
 
 
 class Van:
@@ -48,10 +49,12 @@ class Frontend:
     async def send_new_van(self, desc, who): return await self.backend.send_new_van(self, desc, who)
     async def send_del_van(self, vid): return await self.backend.send_del_van(self, vid)
     async def send_hold_van(self, van, who, isadd): return await self.backend.send_hold_van(self, van, who, isadd)
+    async def send_custom(self, mtype, data): return await self.backend.send_custom(self, mtype, data)
 
     async def recv_new_van(self, van): pass
     async def recv_del_van(self, van): pass
     async def recv_update_van(self, van): pass
+    async def recv_custom(self, mtype, data): pass
 
 
 class DiscordFrontend(Frontend, discord.Client):
@@ -60,20 +63,35 @@ class DiscordFrontend(Frontend, discord.Client):
     cid_debug = 883708092603326505
     admin = [133105865908682752]
     buses = list('🚌🚐🚎🚍')
+    places = {
+        '😠': 'lot by rage',
+        '🗽': 'albany garage'
+    }
 
     def uname(self, user): return user.name
-    def fmt(self, van):
+    async def fmt(self, van):
         return f'van: **{emd(van.desc)}**' + \
             (f' *(by {emd(van.who)})*' if van.who else '') + \
             (f' holding for **{emd(van.holds())}**' if van.holdlist else '')
+    async def where(self):
+        wheremsg = await self.channel.fetch_message(self.whereid)
+        rlist = [(self.places[r.emoji], r.count)
+                 for r in wheremsg.reactions
+                 if r.emoji in self.places.keys() and r.count > 1]
+        return max(rlist, key=lambda x: x[1], default=('???',))[0]
 
     async def go(self):
-        self.silent = False
+        self.silent = self.backend.debug
+        self.saywhere = False
         return await self.start(open('token').read())
+
+    def set_channel(self):
+        self.channel = self.channel_debug if self.silent else self.channel_pub
 
     async def on_ready(self):
         self.channel_pub = self.get_channel(self.cid_pub)
         self.channel_debug = self.get_channel(self.cid_debug)
+        self.set_channel()
         await self.backend.load()
         self.log('started')
 
@@ -100,18 +118,23 @@ class DiscordFrontend(Frontend, discord.Client):
         await self.send_hold_van(v, self.uname(await self.fetch_user(ev.user_id)), isadd)
 
     async def recv_new_van(self, van):
-        ch = self.channel_debug if self.silent else self.channel_pub
-        van.msg = await ch.send(self.fmt(van))
+        van.msg = await self.channel.send(await self.fmt(van))
         await van.msg.add_reaction(random.choice(self.buses))
 
     async def recv_update_van(self, van):
-        await van.msg.edit(content=self.fmt(van))
+        await van.msg.edit(content=await self.fmt(van))
+
+    async def recv_custom(self, mtype, data):
+        if mtype == WHERE_IS_THE_VAN:
+            wheremsg = await self.channel.send('where is the van')
+            for place in self.places.keys(): await wheremsg.add_reaction(place)
+            self.saywhere = True
+            self.whereid = wheremsg.id
 
     async def admin_eval(self, args): return f'```\n{repr(eval(args))}\n```'
     async def admin_await(self, args): return f'```\n{repr(await eval(args))}\n```'
-    async def admin_silent(self, args): self.silent = args == '1'; return f'silent: {self.silent}'
+    async def admin_silent(self, args): self.silent = args == '1'; self.set_channel(); return f'silent: {self.silent}'
     async def admin_dump(self, args): return json.dumps([v.serialize() for v in self.backend.vans])
-
     async def admin_schedule(self, args):
         if args:
             self.backend.auto.read_schedule(args)
@@ -183,17 +206,26 @@ class AutoFrontend(Frontend):
             day, hour, minute = d.weekday(), d.hour, d.minute
             for av in self.schedule:
                 if av.day == d.weekday() and av.hour == d.hour and av.minute == d.minute:
-                    if not av.triggered: await self.send_new_van(av.desc, None)
+                    if not av.triggered:
+                        if av.desc == 'WHERE': await self.send_custom(WHERE_IS_THE_VAN, None)
+                        else: await self.send_new_van(await self.patch(av.desc), None)
                     av.triggered = True
                 else:
                     av.triggered = False
             await asyncio.sleep(1)
 
+    async def patch(self, desc):
+        saywhere = self.backend.discord.saywhere
+        self.backend.discord.saywhere = False
+        return f'{desc} from {await self.backend.discord.where()}' if saywhere else desc
+
 
 class Backend():
     def log(self, msg): log('backend', msg)
 
-    def __init__(self):
+    def __init__(self, debug):
+        self.log(f'starting (debug mode: {debug})')
+        self.debug = debug
         self.discord = DiscordFrontend()
         self.web = WebFrontend()
         self.auto = AutoFrontend()
@@ -216,10 +248,12 @@ class Backend():
         with open('db', 'w') as f: json.dump([v.serialize(True) for v in self.vans], f)
 
     async def load(self):
-        with open('db') as f:
-            self.vans = [Van.deserialize(v) for v in json.load(f)]
-            for v in self.vans:
-                v.msg = await self.discord.channel_pub.fetch_message(v.msgid)
+        try:
+            with open('db') as f:
+                self.vans = [Van.deserialize(v) for v in json.load(f)]
+                for v in self.vans:
+                    v.msg = await self.discord.channel.fetch_message(v.msgid)
+        except FileNotFoundError: pass
 
     def by_id(self, msgid):
         return next((v for v in self.vans if v.msg.id == msgid), None)
@@ -246,5 +280,10 @@ class Backend():
         await asyncio.gather(*(f.recv_update_van(van) for f in self.frontends))
         self.save()
 
+    async def send_custom(self, sender, mtype, data):
+        self.log(f'custom: {sender.label}; {mtype}; {repr(data)}')
+        await asyncio.gather(*(f.recv_custom(mtype, data) for f in self.frontends))
 
-Backend().go()
+
+import sys
+Backend('-d' in sys.argv).go()
