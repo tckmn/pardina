@@ -152,7 +152,9 @@ class WebFrontend(Frontend):
         self.ws = []
 
     def fix_ws(self):
+        oldlen = len(self.ws)
         self.ws = [ws for ws in self.ws if not ws._closing and not ws._closed]
+        if len(self.ws) < oldlen: self.log(f'fixed websockets x{oldlen - len(self.ws)}')
 
     async def go(self):
         runner = web.ServerRunner(web.Server(self.handler))
@@ -178,7 +180,7 @@ class WebFrontend(Frontend):
                 data = json.loads(msg.data)
                 if data['type'] == 'hold':
                     await self.send_hold_van(next(v for v in self.backend.vans if v.vid == data['vid']), data['who'], data['isadd'])
-            self.ws.remove(ws)
+            if ws in self.ws: self.ws.remove(ws)
             self.log(f'websocket {wsid} closed')
             return
 
