@@ -25,6 +25,7 @@ class Van:
         self.who = who
         self.holdlist = holdlist or []
         self.msgid = msgid
+        self.msg = None
     def holds(self): return ', '.join(self.holdlist)
     def serialize(self, full=False):
         return { 'vid': self.vid, 'desc': self.desc, 'who': self.who, 'holdlist': self.holdlist, **({ 'msgid': self.msg.id } if full and hasattr(self, 'msg') else {}) }
@@ -78,11 +79,11 @@ class DiscordFrontend(Frontend, discord.Client):
         rlist = [(self.places[r.emoji], r.count)
                  for r in wheremsg.reactions
                  if r.emoji in self.places.keys() and r.count > 1]
+        self.log(f'rlist for where: {repr(rlist)}')
         return max(rlist, key=lambda x: x[1], default=('???',))[0]
 
     async def go(self):
         self.silent = self.backend.debug
-        self.saywhere = False
         return await self.start(open('token').read())
 
     def set_channel(self):
@@ -122,13 +123,13 @@ class DiscordFrontend(Frontend, discord.Client):
         await van.msg.add_reaction(random.choice(self.buses))
 
     async def recv_update_van(self, van):
-        await van.msg.edit(content=await self.fmt(van))
+        if van.msg: await van.msg.edit(content=await self.fmt(van))
+        else: self.log(f'van {van.vid} tried to update with no msg')
 
     async def recv_custom(self, mtype, data):
         if mtype == WHERE_IS_THE_VAN:
             wheremsg = await self.channel.send('where is the van')
             for place in self.places.keys(): await wheremsg.add_reaction(place)
-            self.saywhere = True
             self.whereid = wheremsg.id
 
     async def admin_eval(self, args): return f'```\n{repr(eval(args))}\n```'
@@ -150,6 +151,9 @@ class WebFrontend(Frontend):
     def __init__(self):
         self.ws = []
 
+    def fix_ws(self):
+        self.ws = [ws for ws in self.ws if not ws._closing and not ws._closed]
+
     async def go(self):
         runner = web.ServerRunner(web.Server(self.handler))
         await runner.setup()
@@ -161,17 +165,21 @@ class WebFrontend(Frontend):
 
         if req.headers.get('Upgrade') == 'websocket':
             ws = web.WebSocketResponse()
+            wsid = int(random.random()*10000)
             await ws.prepare(req)
             self.ws.append(ws)
+            self.log(f'websocket {wsid} opened')
             await ws.send_str(json.dumps({
                 'type': 'set',
                 'vans': [v.serialize() for v in self.backend.vans]
             }))
             async for msg in ws:
+                self.log(f'websocket {wsid} sent {msg.data}')
                 data = json.loads(msg.data)
                 if data['type'] == 'hold':
                     await self.send_hold_van(next(v for v in self.backend.vans if v.vid == data['vid']), data['who'], data['isadd'])
             self.ws.remove(ws)
+            self.log(f'websocket {wsid} closed')
             return
 
         if req.method == 'GET':
@@ -180,11 +188,13 @@ class WebFrontend(Frontend):
         return web.Response(text='hi')
 
     async def recv_new_van(self, van):
+        self.fix_ws()
         await asyncio.gather(*(ws.send_str(json.dumps({
             'type': 'add', 'van': van.serialize()
         })) for ws in self.ws))
 
     async def recv_update_van(self, van):
+        self.fix_ws()
         await asyncio.gather(*(ws.send_str(json.dumps({
             'type': 'upd', 'van': van.serialize()
         })) for ws in self.ws))
@@ -194,10 +204,12 @@ class AutoFrontend(Frontend):
     label = 'AUTO'
 
     def __init__(self):
+        self.saywhere = False
         self.read_schedule()
 
     def read_schedule(self, sched=None):
         self.schedule = [(lambda a,b,c,d:AutoVan(int(a),int(b),int(c),d))(*line.split()) for line in (sched or open('schedule').read()).split('\n') if line.strip()]
+        self.log(f'schedule set ({len(self.schedule)} entries)')
 
     async def go(self):
         self.log('started')
@@ -207,21 +219,25 @@ class AutoFrontend(Frontend):
             for av in self.schedule:
                 if av.day == d.weekday() and av.hour == d.hour and av.minute == d.minute:
                     if not av.triggered:
-                        if av.desc == 'WHERE': await self.send_custom(WHERE_IS_THE_VAN, None)
-                        else: await self.send_new_van(await self.patch(av.desc), None)
+                        if av.desc == 'WHERE':
+                            self.saywhere = True
+                            await self.send_custom(WHERE_IS_THE_VAN, None)
+                        else:
+                            await self.send_new_van(await self.patch(av.desc), None)
                     av.triggered = True
                 else:
                     av.triggered = False
             await asyncio.sleep(1)
 
     async def patch(self, desc):
-        saywhere = self.backend.discord.saywhere
-        self.backend.discord.saywhere = False
+        saywhere = self.saywhere
+        self.saywhere = False
         return f'{desc} from {await self.backend.discord.where()}' if saywhere else desc
 
 
 class Backend():
     def log(self, msg): log('backend', msg)
+    def warn(self, msg): log('backend', f'WARN {msg}')
 
     def __init__(self, debug):
         self.log(f'starting (debug mode: {debug})')
@@ -251,17 +267,18 @@ class Backend():
         try:
             with open('db') as f:
                 self.vans = [Van.deserialize(v) for v in json.load(f)]
-                for v in self.vans:
-                    v.msg = await self.discord.channel.fetch_message(v.msgid)
+                for v in self.vans[-5:]:
+                    try: v.msg = await self.discord.channel.fetch_message(v.msgid)
+                    except discord.errors.NotFound: self.warn(f'van {v.vid} msg not found')
         except FileNotFoundError: pass
 
     def by_id(self, msgid):
-        return next((v for v in self.vans if v.msg.id == msgid), None)
+        return next((v for v in self.vans if v.msg and v.msg.id == msgid), None)
 
     async def send_new_van(self, sender, desc, who):
         self.log(f'new: {sender.label}; {desc}; {who}')
         # TODO error handling, here and below
-        if not desc: return
+        if not desc: return self.warn('van with no description?')
         van = Van(self.maxvid, desc, who)
         self.vans.append(van)
         self.maxvid += 1
@@ -274,8 +291,8 @@ class Backend():
 
     async def send_hold_van(self, sender, van, who, isadd):
         self.log(f'hold: {sender.label}; {van.vid}; {who}; {isadd}')
-        if not who: return
-        if (who in van.holdlist) == isadd: return
+        if not who: return self.warn('hold with no holder?')
+        if (who in van.holdlist) == isadd: return self.warn('hold with no effect?')
         van.holdlist.append(who) if isadd else van.holdlist.remove(who)
         await asyncio.gather(*(f.recv_update_van(van) for f in self.frontends))
         self.save()
