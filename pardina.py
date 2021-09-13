@@ -28,7 +28,8 @@ class Van:
         self.msg = None
     def holds(self): return ', '.join(self.holdlist)
     def serialize(self, full=False):
-        return { 'vid': self.vid, 'desc': self.desc, 'who': self.who, 'holdlist': self.holdlist, **({ 'msgid': self.msg.id } if full and hasattr(self, 'msg') else {}) }
+        msgid = self.msgid or (self.msg and self.msg.id) or None
+        return { 'vid': self.vid, 'desc': self.desc, 'who': self.who, 'holdlist': self.holdlist, **({ 'msgid': msgid } if full and msgid else {}) }
     def deserialize(obj):
         return Van(obj['vid'], obj['desc'], obj['who'], obj['holdlist'], obj['msgid'])
 
