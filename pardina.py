@@ -170,7 +170,7 @@ class WebFrontend(Frontend):
 
     async def broadcast(self, msg):
         self.fix_ws()
-        await asyncio.wait(ws.send_str(json.dumps(msg)) for ws in self.ws)
+        await asyncio.wait([ws.send_str(json.dumps(msg)) for ws in self.ws])
 
     async def go(self):
         runner = web.ServerRunner(web.Server(self.handler))
