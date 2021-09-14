@@ -46,7 +46,11 @@ class AutoVan:
 
 
 class Frontend:
+    def __init__(self, *args, **kwargs):
+        self.backend = kwargs['backend']
+
     def log(self, msg): log(self.label, msg)
+    def warn(self, msg): log(self.label, f'WARN {msg}')
 
     async def send_new_van(self, desc, who): return await self.backend.send_new_van(self, desc, who)
     async def send_del_van(self, vid): return await self.backend.send_del_van(self, vid)
@@ -81,10 +85,16 @@ class DiscordFrontend(Frontend, discord.Client):
                  for r in wheremsg.reactions
                  if r.emoji in self.places.keys() and r.count > 1]
         self.log(f'rlist for where: {repr(rlist)}')
+        self.whereid = None
         return max(rlist, key=lambda x: x[1], default=('???',))[0]
 
-    async def go(self):
+    def __init__(self, *args, **kwargs):
+        Frontend.__init__(self, *args, **kwargs)
+        discord.Client.__init__(self)
         self.silent = self.backend.debug
+        self.whereid = None
+
+    async def go(self):
         return await self.start(open('token').read())
 
     def set_channel(self):
@@ -149,13 +159,18 @@ class WebFrontend(Frontend):
     label = 'WEB'
     page = lambda *_: re.sub(r'\{\{([^}]*)\}\}', lambda m: open(m.group(1)).read(), open('pardina.html').read())
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.ws = []
 
     def fix_ws(self):
         oldlen = len(self.ws)
         self.ws = [ws for ws in self.ws if not ws._closing and not ws._closed]
         if len(self.ws) < oldlen: self.log(f'fixed websockets x{oldlen - len(self.ws)}')
+
+    async def broadcast(self, msg):
+        self.fix_ws()
+        await asyncio.wait(ws.send_str(json.dumps(msg)) for ws in self.ws)
 
     async def go(self):
         runner = web.ServerRunner(web.Server(self.handler))
@@ -191,23 +206,17 @@ class WebFrontend(Frontend):
         return web.Response(text='hi')
 
     async def recv_new_van(self, van):
-        self.fix_ws()
-        await asyncio.gather(*(ws.send_str(json.dumps({
-            'type': 'add', 'van': van.serialize()
-        })) for ws in self.ws))
+        await self.broadcast({ 'type': 'add', 'van': van.serialize() })
 
     async def recv_update_van(self, van):
-        self.fix_ws()
-        await asyncio.gather(*(ws.send_str(json.dumps({
-            'type': 'upd', 'van': van.serialize()
-        })) for ws in self.ws))
+        await self.broadcast({ 'type': 'upd', 'van': van.serialize() })
 
 
 class AutoFrontend(Frontend):
     label = 'AUTO'
 
-    def __init__(self):
-        self.saywhere = False
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.read_schedule()
 
     def read_schedule(self, sched=None):
@@ -223,7 +232,6 @@ class AutoFrontend(Frontend):
                 if av.day == d.weekday() and av.hour == d.hour and av.minute == d.minute:
                     if not av.triggered:
                         if av.desc == 'WHERE':
-                            self.saywhere = True
                             await self.send_custom(WHERE_IS_THE_VAN, None)
                         else:
                             await self.send_new_van(await self.patch(av.desc), None)
@@ -233,9 +241,7 @@ class AutoFrontend(Frontend):
             await asyncio.sleep(1)
 
     async def patch(self, desc):
-        saywhere = self.saywhere
-        self.saywhere = False
-        return f'{desc} from {await self.backend.discord.where()}' if saywhere else desc
+        return f'{desc} from {await self.backend.discord.where()}' if self.whereid else desc
 
 
 class Backend():
@@ -245,9 +251,9 @@ class Backend():
     def __init__(self, debug):
         self.log(f'starting (debug mode: {debug})')
         self.debug = debug
-        self.discord = DiscordFrontend()
-        self.web = WebFrontend()
-        self.auto = AutoFrontend()
+        self.discord = DiscordFrontend(backend=self)
+        self.web = WebFrontend(backend=self)
+        self.auto = AutoFrontend(backend=self)
         self.frontends = [ 0
                          , self.discord
                          , self.web
@@ -258,18 +264,24 @@ class Backend():
 
     def go(self):
         loop = asyncio.get_event_loop()
-        for f in self.frontends:
-            f.backend = self
-            loop.create_task(f.go())
+        for f in self.frontends: loop.create_task(f.go())
         loop.run_forever()
 
     def save(self):
-        with open('db', 'w') as f: json.dump([v.serialize(True) for v in self.vans], f)
+        with open('db', 'w') as f:
+            json.dump({
+                'vans': [v.serialize(True) for v in self.vans],
+                'whereid': self.discord.whereid
+            }, f)
 
     async def load(self):
         try:
             with open('db') as f:
-                self.vans = [Van.deserialize(v) for v in json.load(f)]
+                data = json.load(f)
+                self.vans = [Van.deserialize(v) for v in data['vans']]
+                self.maxvid = max((v.vid for v in self.vans), default=-1) + 1
+                self.discord.whereid = data['whereid']
+                # do this last because it takes time
                 for v in self.vans[-5:]:
                     try: v.msg = await self.discord.channel.fetch_message(v.msgid)
                     except discord.errors.NotFound: self.warn(f'van {v.vid} msg not found')
