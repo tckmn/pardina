@@ -76,7 +76,7 @@ class DiscordFrontend(Frontend, discord.Client):
         '❓': 'a mystery location'
     }
 
-    def uname(self, user): return user.name
+    def uname(self, user): return user.display_name
     async def fmt(self, van):
         return f'van: **{emd(van.desc)}**' + \
             (f' *(by {emd(van.who)})*' if van.who else '') + \
