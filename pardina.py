@@ -16,6 +16,7 @@ def log(label, msg):
 emd = discord.utils.escape_markdown
 MON, TUE, WED, THU, FRI, SAT, SUN = range(7)
 WHERE_IS_THE_VAN = 0
+WHERE_DEFAULT = 'lot by rage'
 
 
 class Van:
@@ -28,8 +29,7 @@ class Van:
         self.msg = None
     def holds(self): return ', '.join(self.holdlist)
     def serialize(self, full=False):
-        msgid = self.msgid or (self.msg and self.msg.id) or None
-        return { 'vid': self.vid, 'desc': self.desc, 'who': self.who, 'holdlist': self.holdlist, **({ 'msgid': msgid } if full and msgid else {}) }
+        return { 'vid': self.vid, 'desc': self.desc, 'who': self.who, 'holdlist': self.holdlist, **({ 'msgid': self.msgid } if full and self.msgid else {}) }
     def deserialize(obj):
         return Van(obj['vid'], obj['desc'], obj['who'], obj['holdlist'], obj['msgid'])
 
@@ -68,10 +68,12 @@ class DiscordFrontend(Frontend, discord.Client):
     cid_pub = 881689982635487314
     cid_debug = 883708092603326505
     admin = [133105865908682752]
-    buses = list('🚌🚐🚎🚍')
+    buses = list('🚌🚐🚎🚍🦈')
+    normal_buses = 4
     places = {
-        '😠': 'lot by rage',
-        '🗽': 'albany garage'
+        '😡': 'lot by rage',
+        '🗽': 'albany garage',
+        '❓': 'a mystery location'
     }
 
     def uname(self, user): return user.name
@@ -80,13 +82,14 @@ class DiscordFrontend(Frontend, discord.Client):
             (f' *(by {emd(van.who)})*' if van.who else '') + \
             (f' holding for **{emd(van.holds())}**' if van.holdlist else '')
     async def where(self):
+        if not self.whereid: return None
         wheremsg = await self.channel.fetch_message(self.whereid)
         rlist = [(self.places[r.emoji], r.count)
                  for r in wheremsg.reactions
                  if r.emoji in self.places.keys() and r.count > 1]
         self.log(f'rlist for where: {repr(rlist)}')
         self.whereid = None
-        return max(rlist, key=lambda x: x[1], default=('???',))[0]
+        return max(rlist, key=lambda x: x[1], default=(WHERE_DEFAULT,))[0]
 
     def __init__(self, *args, **kwargs):
         Frontend.__init__(self, *args, **kwargs)
@@ -125,13 +128,16 @@ class DiscordFrontend(Frontend, discord.Client):
 
     async def on_react(self, ev, isadd):
         if ev.user_id == self.user.id or ev.emoji.name not in self.buses: return
-        v = self.backend.by_id(ev.message_id)
+        v = self.backend.by_msgid(ev.message_id)
         if not v: return
         await self.send_hold_van(v, self.uname(await self.fetch_user(ev.user_id)), isadd)
 
     async def recv_new_van(self, van):
         van.msg = await self.channel.send(await self.fmt(van))
-        await van.msg.add_reaction(random.choice(self.buses))
+        van.msgid = van.msg.id
+        await van.msg.add_reaction(random.choice(
+            self.buses[:self.normal_buses] if random.random() < 0.95 else
+            self.buses[self.normal_buses:]))
 
     async def recv_update_van(self, van):
         if van.msg: await van.msg.edit(content=await self.fmt(van))
@@ -139,7 +145,7 @@ class DiscordFrontend(Frontend, discord.Client):
 
     async def recv_custom(self, mtype, data):
         if mtype == WHERE_IS_THE_VAN:
-            wheremsg = await self.channel.send('where is the van')
+            wheremsg = await self.channel.send(f'where is the van (default: {WHERE_DEFAULT})')
             for place in self.places.keys(): await wheremsg.add_reaction(place)
             self.whereid = wheremsg.id
 
@@ -242,7 +248,8 @@ class AutoFrontend(Frontend):
             await asyncio.sleep(1)
 
     async def patch(self, desc):
-        return f'{desc} from {await self.backend.discord.where()}' if self.whereid else desc
+        where = await self.backend.discord.where()
+        return f'{desc} from lobby 7 (driven from {where})' if where else desc
 
 
 class Backend():
@@ -288,8 +295,11 @@ class Backend():
                     except discord.errors.NotFound: self.warn(f'van {v.vid} msg not found')
         except FileNotFoundError: pass
 
-    def by_id(self, msgid):
-        return next((v for v in self.vans if v.msg and v.msg.id == msgid), None)
+    def by_msgid(self, msgid):
+        return next((v for v in self.vans if v.msgid == msgid), None)
+
+    def by_vid(self, vid):
+        return next((v for v in self.vans if v.vid == vid), None)
 
     async def send_new_van(self, sender, desc, who):
         self.log(f'new: {sender.label}; {desc}; {who}')
@@ -303,6 +313,7 @@ class Backend():
 
     async def send_del_van(self, sender, vid):
         self.log(f'del: {sender.label}; {vid}')
+        await asyncio.gather(*(f.recv_del_van(vid) for f in self.frontends))
         self.save()
 
     async def send_hold_van(self, sender, van, who, isadd):
@@ -316,6 +327,7 @@ class Backend():
     async def send_custom(self, sender, mtype, data):
         self.log(f'custom: {sender.label}; {mtype}; {repr(data)}')
         await asyncio.gather(*(f.recv_custom(mtype, data) for f in self.frontends))
+        self.save()
 
 
 import sys
