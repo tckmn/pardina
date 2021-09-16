@@ -8,7 +8,8 @@ import json
 import random
 import re
 
-logfile = open('log', 'a')
+dd = lambda f: 'data/'+f
+logfile = open(dd('log'), 'a')
 def log(label, msg):
     s = f'{datetime.now().strftime("%F %T")} [{label}] {msg}'
     print(s)
@@ -75,7 +76,7 @@ class DiscordFrontend(Frontend, discord.Client):
         '🗽': 'albany garage',
         '❓': 'a mystery location'
     }
-    initials = eval(open('initials').read())
+    initials = eval(open(dd('initials')).read())
 
     def uname(self, user): return self.initials.get(user.id, user.display_name)
     async def fmt(self, van):
@@ -99,7 +100,7 @@ class DiscordFrontend(Frontend, discord.Client):
         self.whereid = None
 
     async def go(self):
-        return await self.start(open('token').read())
+        return await self.start(open(dd('token')).read())
 
     def set_channel(self):
         self.channel = self.channel_debug if self.silent else self.channel_pub
@@ -233,7 +234,7 @@ class AutoFrontend(Frontend):
         self.read_schedule()
 
     def read_schedule(self, sched=None):
-        self.schedule = [(lambda a,b,c,d:AutoVan(int(a),int(b),int(c),d))(*line.split()) for line in (sched or open('schedule').read()).split('\n') if line.strip()]
+        self.schedule = [(lambda a,b,c,d:AutoVan(int(a),int(b),int(c),d))(*line.split()) for line in (sched or open(dd('schedule')).read()).split('\n') if line.strip()]
         self.log(f'schedule set ({len(self.schedule)} entries)')
 
     async def go(self):
@@ -282,7 +283,7 @@ class Backend():
         loop.run_forever()
 
     def save(self):
-        with open('db', 'w') as f:
+        with open(dd('db'), 'w') as f:
             json.dump({
                 'vans': [v.serialize(True) for v in self.vans],
                 'whereid': self.discord.whereid
@@ -290,7 +291,7 @@ class Backend():
 
     async def load(self):
         try:
-            with open('db') as f:
+            with open(dd('db')) as f:
                 data = json.load(f)
                 self.vans = [Van.deserialize(v) for v in data['vans']]
                 self.maxvid = max((v.vid for v in self.vans), default=-1) + 1
