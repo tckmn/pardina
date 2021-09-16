@@ -75,8 +75,9 @@ class DiscordFrontend(Frontend, discord.Client):
         '🗽': 'albany garage',
         '❓': 'a mystery location'
     }
+    initials = eval(open('initials').read())
 
-    def uname(self, user): return user.display_name
+    def uname(self, user): return self.initials.get(user.id, user.display_name)
     async def fmt(self, van):
         return f'van: **{emd(van.desc)}**' + \
             (f' *(by {emd(van.who)})*' if van.who else '') + \
@@ -169,14 +170,19 @@ class WebFrontend(Frontend):
         super().__init__(*args, **kwargs)
         self.ws = []
 
-    def fix_ws(self):
+    async def fix_ws(self):
+        async def subfix(ws):
+            if not ws._writer.transport or ws._writer.transport.is_closing():
+                await ws.close()
+                return False
+            return True
         oldlen = len(self.ws)
-        self.ws = [ws for ws in self.ws if not ws._closing and not ws._closed]
+        self.ws = [ws for ws in self.ws if await subfix(ws)]
         if len(self.ws) < oldlen: self.log(f'fixed websockets x{oldlen - len(self.ws)}')
 
     async def broadcast(self, msg):
         if not self.ws: return
-        self.fix_ws()
+        await self.fix_ws()
         await asyncio.wait([ws.send_str(json.dumps(msg)) for ws in self.ws])
 
     async def go(self):
