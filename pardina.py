@@ -76,7 +76,6 @@ class DiscordFrontend(Frontend, discord.Client):
         '🗽': 'albany garage',
         '❓': 'a mystery location'
     }
-    initials = eval(open(dd('initials')).read())
 
     def uname(self, user): return self.initials.get(user.id, user.display_name)
     async def fmt(self, van):
@@ -91,16 +90,21 @@ class DiscordFrontend(Frontend, discord.Client):
                  if r.emoji in self.places.keys() and r.count > 1]
         self.log(f'rlist for where: {repr(rlist)}')
         self.whereid = None
-        return max(rlist, key=lambda x: x[1], default=(WHERE_DEFAULT,))[0]
+        return max(rlist, key=lambda x: x[1], default=(WHERE_DEFAULT+' (probably)',))[0]
 
     def __init__(self, *args, **kwargs):
         Frontend.__init__(self, *args, **kwargs)
         discord.Client.__init__(self)
         self.silent = self.backend.debug
         self.whereid = None
+        self.update_initials()
 
     async def go(self):
         return await self.start(open(dd('token')).read())
+
+    def update_initials(self):
+        self.initials = eval(open(dd('initials')).read())
+        return len(self.initials)
 
     def set_channel(self):
         self.channel = self.channel_debug if self.silent else self.channel_pub
@@ -155,6 +159,7 @@ class DiscordFrontend(Frontend, discord.Client):
     async def admin_await(self, args): return f'```\n{repr(await eval(args))}\n```'
     async def admin_silent(self, args): self.silent = args == '1'; self.set_channel(); return f'silent: {self.silent}'
     async def admin_dump(self, args): return json.dumps([v.serialize() for v in self.backend.vans])
+    async def admin_initials(self, args): return f'initials updated ({self.backend.discord.update_initials()} total)'
     async def admin_schedule(self, args):
         if args:
             self.backend.auto.read_schedule(args)
@@ -256,7 +261,7 @@ class AutoFrontend(Frontend):
 
     async def patch(self, desc):
         where = await self.backend.discord.where()
-        return f'{desc} from lobby 7 (driven from {where})' if where else desc
+        return f'{desc} from {where}' if where else desc
 
 
 class Backend():
