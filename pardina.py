@@ -117,13 +117,19 @@ class DiscordFrontend(Frontend, discord.Client):
         self.log('started')
 
     async def on_message(self, message):
+        if message.author == self.user: return
+
         if message.author.id in self.admin and message.content.startswith('!'):
             cmd, *args = message.content[1:].split(None, 1)
             if hasattr(self, f'admin_{cmd}'):
                 await message.channel.send(await getattr(self, f'admin_{cmd}')(args[0] if args else None) or '[done]')
                 return
 
-        if message.author == self.user or message.channel.id not in [self.cid_pub, self.cid_debug]: return
+        if re.search(r'(?i)sha+rk', message.content):
+            await message.channel.send(f'sh{"a"*random.randint(5,15)}rk')
+            return
+
+        if message.channel.id not in [self.cid_pub, self.cid_debug]: return
 
         if message.content.lower().startswith('van'):
             await self.send_new_van(re.sub(r'(?i)^van[: ]*', '', message.content) or '(no description)', self.uname(message.author))
