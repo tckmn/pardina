@@ -187,8 +187,8 @@ class WebFrontend(Frontend):
         if len(self.ws) < oldlen: self.log(f'fixed websockets x{oldlen - len(self.ws)}')
 
     async def broadcast(self, msg):
-        if not self.ws: return
         await self.fix_ws()
+        if not self.ws: return
         await asyncio.wait([ws.send_str(json.dumps(msg)) for ws in self.ws])
 
     async def go(self):
