@@ -69,7 +69,7 @@ class DiscordFrontend(Frontend, discord.Client):
     cid_pub = 881689982635487314
     cid_debug = 883708092603326505
     admin = [133105865908682752]
-    buses = list('🚌🚐🚎🚍🦈')
+    buses = list('🚌🚐🚎🚍🦈🕴️✈️')
     normal_buses = 4
     places = {
         '😡': 'lot by rage',
@@ -142,7 +142,7 @@ class DiscordFrontend(Frontend, discord.Client):
         van.msg = await self.channel.send(await self.fmt(van))
         van.msgid = van.msg.id
         await van.msg.add_reaction(random.choice(
-            self.buses[:self.normal_buses] if random.random() < 0.95 else
+            self.buses[:self.normal_buses] if random.random() < 0.9 else
             self.buses[self.normal_buses:]))
 
     async def recv_update_van(self, van):
