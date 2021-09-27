@@ -162,7 +162,7 @@ class DiscordFrontend(Frontend, discord.Client):
     async def admin_initials(self, args): return f'initials updated ({self.backend.discord.update_initials()} total)'
     async def admin_schedule(self, args):
         if args:
-            self.backend.auto.read_schedule(args)
+            self.backend.auto.read_schedule(None if args == '.' else args)
             return 'new schedule set'
         else:
             return '```\n' + '\n'.join(map(str, self.backend.auto.schedule)) + '\n```'
