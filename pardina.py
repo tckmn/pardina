@@ -69,7 +69,14 @@ class DiscordFrontend(Frontend, discord.Client):
     cid_pub = 881689982635487314
     cid_debug = 883708092603326505
     admin = [133105865908682752]
-    buses = list('🚌🚐🚎🚍🦈🕴️✈️')
+    buses = [ '🚌'
+            , '🚐'
+            , '🚎'
+            , '🚍'
+            , '🦈'
+            , '🕴️'
+            , '✈️'
+            ]
     normal_buses = 4
     places = {
         '😡': 'lot by rage',
