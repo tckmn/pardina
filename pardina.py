@@ -73,9 +73,13 @@ class DiscordFrontend(Frontend, discord.Client):
     normal_buses = 4
     places = {
         '😡': 'lot by rage',
-        '🗽': 'albany garage',
+        '🇦🇱': 'albany garage (holds at rage by default)',
         '❓': 'a mystery location'
     }
+    coercions = {
+        '🗽': '🇦🇱'
+    }
+    def ec(self, e): return self.coercions.get(e, e)
 
     def uname(self, user): return self.initials.get(user.id, user.display_name)
     async def fmt(self, van):
@@ -85,9 +89,10 @@ class DiscordFrontend(Frontend, discord.Client):
     async def where(self):
         if not self.whereid: return None
         wheremsg = await self.channel.fetch_message(self.whereid)
-        rlist = [(self.places[r.emoji], r.count)
+        # ugh, python is incompetent and lacks let in comprehensions
+        rlist = [(self.places[self.ec(r.emoji)], r.count)
                  for r in wheremsg.reactions
-                 if r.emoji in self.places.keys() and r.count > 1]
+                 if self.ec(r.emoji) in self.places.keys() and r.count > 1]
         self.log(f'rlist for where: {repr(rlist)}')
         self.whereid = None
         return max(rlist, key=lambda x: x[1], default=(WHERE_DEFAULT+' (probably)',))[0]
@@ -172,6 +177,14 @@ class DiscordFrontend(Frontend, discord.Client):
             return 'new schedule set'
         else:
             return '```\n' + '\n'.join(map(str, self.backend.auto.schedule)) + '\n```'
+    async def admin_where(self, args):
+        if args == 'clear':
+            self.whereid = None
+            self.backend.save()
+            return 'cleared where'
+        else:
+            await self.send_custom(WHERE_IS_THE_VAN, None)
+            return 'asked where'
 
 
 class WebFrontend(Frontend):

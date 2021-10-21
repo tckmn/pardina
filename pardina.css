@@ -1,10 +1,13 @@
-html, body {
+html, body, input, button {
+    font: 14pt sans-serif;
     color: #d8d8d8;
+}
+
+html, body {
     background: #000;
 }
 
 input, button {
-    color: #d8d8d8;
     background-color: #181818;
     border: 1px solid #383838;
     border-radius: 2px;
@@ -13,3 +16,7 @@ input, button {
 
 button { margin-right: 1rem; }
 div[data-hasholds="0"] .holdfor { display: none; }
+
+div#vans { margin-top: 1rem; }
+div#vans > div { margin: 5px 0; min-height: 2rem; display: flex; align-items: center; }
+div#vans > div > button { align-self: stretch; }
