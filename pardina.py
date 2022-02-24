@@ -17,7 +17,6 @@ def log(label, msg):
 emd = discord.utils.escape_markdown
 MON, TUE, WED, THU, FRI, SAT, SUN = range(7)
 WHERE_IS_THE_VAN = 0
-WHERE_DEFAULT = 'lot by rage'
 
 
 class Van:
@@ -77,14 +76,21 @@ class DiscordFrontend(Frontend, discord.Client):
             , '🕴️'
             , '✈️'
             ]
+    floors = [ '🐪'
+             , '🐫'
+             , '🇮🇲'
+             , '🍀'
+             , '🌟'
+             , '❄️'
+             ]
     normal_buses = 4
     places = {
-        '😡': 'lot by rage',
-        '🇦🇱': 'albany garage (holds at rage by default)',
+        '🧑‍✈️': 'the lot at 158 mass ave',
+        '🇦🇱': 'albany street garage',
         '❓': 'a mystery location'
     }
     coercions = {
-        '🗽': '🇦🇱'
+        # '🗽': '🇦🇱'
     }
     def ec(self, e): return self.coercions.get(e, e)
 
@@ -100,9 +106,16 @@ class DiscordFrontend(Frontend, discord.Client):
         rlist = [(self.places[self.ec(r.emoji)], r.count)
                  for r in wheremsg.reactions
                  if self.ec(r.emoji) in self.places.keys() and r.count > 1]
+        flist = [(self.floors.index(self.ec(r.emoji))+1, r.count)
+                 for r in wheremsg.reactions
+                 if self.ec(r.emoji) in self.floors and r.count > 1]
         self.log(f'rlist for where: {repr(rlist)}')
         self.whereid = None
-        return max(rlist, key=lambda x: x[1], default=(WHERE_DEFAULT+' (probably)',))[0]
+        ret = max(rlist, key=lambda x: x[1], default=(self.wheredefault,))[0]
+        fl = max(flist, key=lambda x: x[1], default=(None,))[0]
+        if fl: ret += f', floor {fl}'
+        if len(rlist) == 0: ret += ' (probably)'
+        return ret
 
     def __init__(self, *args, **kwargs):
         Frontend.__init__(self, *args, **kwargs)
@@ -169,8 +182,13 @@ class DiscordFrontend(Frontend, discord.Client):
 
     async def recv_custom(self, mtype, data):
         if mtype == WHERE_IS_THE_VAN:
-            wheremsg = await self.channel.send(f'where is the van (default: {WHERE_DEFAULT})')
+            self.wheredefault = \
+                'the lot at 158 mass ave' if data == 'r' else \
+                'albany street garage' if data == 'a' else \
+                data if data and type(data) is str else '???'
+            wheremsg = await self.channel.send(f'where is the van (default: {self.wheredefault})')
             for place in self.places.keys(): await wheremsg.add_reaction(place)
+            for floor in self.floors: await wheremsg.add_reaction(floor)
             self.whereid = wheremsg.id
 
     async def admin_eval(self, args): return f'```\n{repr(eval(args))}\n```'
@@ -179,7 +197,9 @@ class DiscordFrontend(Frontend, discord.Client):
     async def admin_dump(self, args): return json.dumps([v.serialize() for v in self.backend.vans])
     async def admin_initials(self, args): return f'initials updated ({self.backend.discord.update_initials()} total)'
     async def admin_schedule(self, args):
-        if args:
+        if args in ['no', 'none', 'off']:
+            self.backend.auto.read_schedule(' ')
+        elif args:
             self.backend.auto.read_schedule(None if args == '.' else args)
             return 'new schedule set'
         else:
@@ -190,7 +210,7 @@ class DiscordFrontend(Frontend, discord.Client):
             self.backend.save()
             return 'cleared where'
         else:
-            await self.send_custom(WHERE_IS_THE_VAN, None)
+            await self.send_custom(WHERE_IS_THE_VAN, args)
             return 'asked where'
 
 
@@ -276,10 +296,12 @@ class AutoFrontend(Frontend):
             for av in self.schedule:
                 if av.day == d.weekday() and av.hour == d.hour and av.minute == d.minute:
                     if not av.triggered:
-                        if av.desc == 'WHERE':
-                            await self.send_custom(WHERE_IS_THE_VAN, None)
+                        if av.desc.startswith('WHERE'):
+                            await self.send_custom(WHERE_IS_THE_VAN, av.desc[5:])
                         else:
-                            await self.send_new_van(await self.patch(av.desc), None)
+                            desc, warning = await self.patch(av.desc)
+                            await self.send_new_van(desc, None)
+                            if warning: await self.backend.discord.channel.send(f'⚠️🚨⚠️ {warning} 🚨⚠️🚨')
                     av.triggered = True
                 else:
                     av.triggered = False
@@ -287,7 +309,11 @@ class AutoFrontend(Frontend):
 
     async def patch(self, desc):
         where = await self.backend.discord.where()
-        return f'{desc} from {where}' if where else desc
+        return (
+            f'{desc} from {where}',
+            'holds between buildings 39 and 24 by default' if 'albany' in where else \
+            'holds at the lot at 158 mass ave by default' if 'lot' in where else None
+        ) if where else (desc, None)
 
 
 class Backend():
@@ -317,7 +343,8 @@ class Backend():
         with open(dd('db'), 'w') as f:
             json.dump({
                 'vans': [v.serialize(True) for v in self.vans],
-                'whereid': self.discord.whereid
+                'whereid': self.discord.whereid,
+                'wheredefault': self.discord.wheredefault
             }, f)
 
     async def load(self):
@@ -327,6 +354,7 @@ class Backend():
                 self.vans = [Van.deserialize(v) for v in data['vans']]
                 self.maxvid = max((v.vid for v in self.vans), default=-1) + 1
                 self.discord.whereid = data['whereid']
+                self.discord.wheredefault = data['wheredefault']
                 # do this last because it takes time
                 for v in self.vans[-5:]:
                     try: v.msg = await self.discord.channel.fetch_message(v.msgid)
