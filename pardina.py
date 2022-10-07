@@ -7,8 +7,12 @@ import discord
 import json
 import random
 import re
+import subprocess
 
-dd = lambda f: 'data/'+f
+import sys
+isdebug = '-d' in sys.argv
+nodebug = lambda x: [] if isdebug else [x]
+dd = (lambda f: 'debugdata/'+f) if isdebug else (lambda f: 'data/'+f)
 logfile = open(dd('log'), 'a')
 def log(label, msg):
     s = f'{datetime.now().strftime("%F %T")} [{label}] {msg}'
@@ -76,23 +80,27 @@ class DiscordFrontend(Frontend, discord.Client):
             , '🕴️'
             , '✈️'
             ]
-    floors = [ '🐪'
-             , '🐫'
-             , '🇮🇲'
-             , '🍀'
-             , '🌟'
-             , '❄️'
+    floors = [ [ *nodebug('tichu'), '🐪', '🔂', '☝️' ]
+             , [ *nodebug('radiatore'), '💕', '🐫', '🌱', '✌️', '🧦' ]
+             , [ *nodebug('bigc'), '🍡', '☘️', '🇮🇲', '🤟' ]
+             , [ *nodebug('cflatmajorl'), '🍀', '☠️', '💅', '🦋' ]
+             , [ '💫', '🖐️', '🌟', '🇻🇳', '🌿' ]
+             , [ '✡️', '❄️', '🌨️', '🔯' ]
              ]
     normal_buses = 4
     places = {
         '🧑‍✈️': 'the lot at 158 mass ave',
         '🇦🇱': 'albany street garage',
+        '🗽': 'beneath stata',
         '❓': 'a mystery location'
     }
     coercions = {
         # '🗽': '🇦🇱'
     }
-    def ec(self, e): return self.coercions.get(e, e)
+    emojis = {}
+    def er(self, e): return self.emojis.get(e, e) # reify
+    def ec(self, e): return self.ec2(e if type(e) is str else e.name)
+    def ec2(self, e): return self.coercions.get(e, e)
 
     def uname(self, user): return self.initials.get(user.id, user.display_name)
     async def fmt(self, van):
@@ -101,14 +109,18 @@ class DiscordFrontend(Frontend, discord.Client):
             (f' holding for **{emd(van.holds())}**' if van.holdlist else '')
     async def where(self):
         if not self.whereid: return None
-        wheremsg = await self.channel.fetch_message(self.whereid)
+        try:
+            wheremsg = await self.channel.fetch_message(self.whereid)
+        except:
+            return None
         # ugh, python is incompetent and lacks let in comprehensions
         rlist = [(self.places[self.ec(r.emoji)], r.count)
                  for r in wheremsg.reactions
                  if self.ec(r.emoji) in self.places.keys() and r.count > 1]
-        flist = [(self.floors.index(self.ec(r.emoji))+1, r.count)
+        gf = lambda emoji: next((i+1 for i,floor in enumerate(self.floors) if self.ec(emoji) in floor), None)
+        flist = [(gf(r.emoji), r.count)
                  for r in wheremsg.reactions
-                 if self.ec(r.emoji) in self.floors and r.count > 1]
+                 if gf(r.emoji) and r.count > 1]
         self.log(f'rlist for where: {repr(rlist)}')
         self.whereid = None
         ret = max(rlist, key=lambda x: x[1], default=(self.wheredefault,))[0]
@@ -119,7 +131,9 @@ class DiscordFrontend(Frontend, discord.Client):
 
     def __init__(self, *args, **kwargs):
         Frontend.__init__(self, *args, **kwargs)
-        discord.Client.__init__(self)
+        intents = discord.Intents.default()
+        intents.members = True
+        discord.Client.__init__(self, intents=intents)
         self.silent = self.backend.debug
         self.whereid = None
         self.update_initials()
@@ -134,10 +148,20 @@ class DiscordFrontend(Frontend, discord.Client):
     def set_channel(self):
         self.channel = self.channel_debug if self.silent else self.channel_pub
 
+    def set_emojis(self):
+        self.emojis = {
+            k: v
+            for name in 'tichu radiatore bigc cflatmajorl'.split()
+            for k,v in [[name, next((x for x in self.channel.guild.emojis if x.name == name), None)]]
+            if v
+        }
+        print(self.emojis)
+
     async def on_ready(self):
         self.channel_pub = self.get_channel(self.cid_pub)
         self.channel_debug = self.get_channel(self.cid_debug)
         self.set_channel()
+        self.set_emojis()
         await self.backend.load()
         self.log('started')
 
@@ -152,6 +176,32 @@ class DiscordFrontend(Frontend, discord.Client):
 
         if re.search(r'(?i)sha+rk', message.content):
             await message.channel.send(f'sh{"a"*random.randint(5,15)}rk')
+            return
+
+        if m := re.match(r'(?i)roll\s*([-+*/\sd0-9()]+)$', message.content):
+            try:
+                res = eval(re.sub(r'(\d+)?d(\d+)',
+                                  lambda n: str(sum(random.randint(1, int(n.group(2))) for _ in range(int(n.group(1)) if n.group(1) else 1))),
+                                  m.group(1)))
+            except:
+                res = 'no'
+            await message.channel.send(res)
+            return
+
+        cl = message.content.lower()
+        if cl == 'sq' or cl.startswith('sq '):
+            args = cl.split()[1:]
+            levels = 'mainstream plus a1 a2 c1 c2 c3a c3 c3x c4a c4 c4x all'.split()
+            goodnum = lambda x: len(x) == 1 and x in '123456789'
+            subprocess.run([ './sq.sh'
+                           , ([x for x in args if x in levels]+['C2'])[0]
+                           , ([x for x in args if goodnum(x)]+['3'])[0]
+                           , 'level' if 'level' in args else 'random'
+                           ])
+            before = open('sq/before').read()
+            after = open('sq/after').read()
+            answer = open('sq/answer').read()
+            await message.channel.send(f'```{before}```\n```{after}```\n||{answer}||')
             return
 
         if message.channel.id not in [self.cid_pub, self.cid_debug]: return
@@ -169,6 +219,14 @@ class DiscordFrontend(Frontend, discord.Client):
         if not v: return
         await self.send_hold_van(v, self.uname(await self.fetch_user(ev.user_id)), isadd)
 
+    async def on_member_update(self, before, after):
+        if before.id == 133105865908682752:
+            if (bad := next((role for role in before.roles if role.name == 'master-of-the-weird-vacuum'), None)) and bad not in after.roles:
+                await after.add_roles(bad, reason='mutiny attempt, is the true master')
+        else:
+            if bad := next((role for role in after.roles if role.name == 'master-of-the-weird-vacuum'), None):
+                await after.remove_roles(bad, reason='impostor, not the true master')
+
     async def recv_new_van(self, van):
         van.msg = await self.channel.send(await self.fmt(van))
         van.msgid = van.msg.id
@@ -185,10 +243,11 @@ class DiscordFrontend(Frontend, discord.Client):
             self.wheredefault = \
                 'the lot at 158 mass ave' if data == 'r' else \
                 'albany street garage' if data == 'a' else \
+                'beneath stata' if data == 's' else \
                 data if data and type(data) is str else '???'
             wheremsg = await self.channel.send(f'where is the van (default: {self.wheredefault})')
             for place in self.places.keys(): await wheremsg.add_reaction(place)
-            for floor in self.floors: await wheremsg.add_reaction(floor)
+            for floor in self.floors: await wheremsg.add_reaction(self.er(random.choice(floor)))
             self.whereid = wheremsg.id
 
     async def admin_eval(self, args): return f'```\n{repr(eval(args))}\n```'
@@ -285,7 +344,7 @@ class AutoFrontend(Frontend):
         self.read_schedule()
 
     def read_schedule(self, sched=None):
-        self.schedule = [(lambda a,b,c,d:AutoVan(int(a),int(b),int(c),d))(*line.split()) for line in (sched or open(dd('schedule')).read()).split('\n') if line.strip()]
+        self.schedule = [(lambda a,b,c,d:AutoVan(int(a),int(b),int(c),d))(*line.split(None, 3)) for line in (sched or open(dd('schedule')).read()).split('\n') if line.strip()]
         self.log(f'schedule set ({len(self.schedule)} entries)')
 
     async def go(self):
@@ -300,8 +359,10 @@ class AutoFrontend(Frontend):
                             await self.send_custom(WHERE_IS_THE_VAN, av.desc[5:])
                         else:
                             desc, warning = await self.patch(av.desc)
+                            # await self.send_new_van(desc, None)
+                            # if False and warning: await self.backend.discord.channel.send(f'⚠️🚨⚠️ {warning} 🚨⚠️🚨')
+                            if warning: await self.backend.discord.channel.send(warning)
                             await self.send_new_van(desc, None)
-                            if warning: await self.backend.discord.channel.send(f'⚠️🚨⚠️ {warning} 🚨⚠️🚨')
                     av.triggered = True
                 else:
                     av.triggered = False
@@ -309,11 +370,12 @@ class AutoFrontend(Frontend):
 
     async def patch(self, desc):
         where = await self.backend.discord.where()
-        return (
-            f'{desc} from {where}',
-            'holds between buildings 39 and 24 by default' if 'albany' in where else \
-            'holds at the lot at 158 mass ave by default' if 'lot' in where else None
-        ) if where else (desc, None)
+        prep = '' if where.startswith('beneath') else 'at '
+        holds = None if where is None else \
+            ', holds between buildings 39 and 24 by default' if 'albany' in where else \
+            ', holds at the lot at 158 mass ave by default' if 'lot' in where else ''
+        return (f'{desc}{holds}', f'*the van is {prep}{where}*') if where else (desc, None)
+        # return (f'{desc} from {where}', holds) if where else (desc, None)
 
 
 class Backend():
@@ -396,5 +458,4 @@ class Backend():
         self.save()
 
 
-import sys
-Backend('-d' in sys.argv).go()
+Backend(isdebug).go()
