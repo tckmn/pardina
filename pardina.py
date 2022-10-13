@@ -174,7 +174,12 @@ class DiscordFrontend(Frontend, discord.Client):
                 await message.channel.send(await getattr(self, f'admin_{cmd}')(args[0] if args else None) or '[done]')
                 return
 
-        if re.search(r'(?i)sha+rk', message.content):
+        cyrillic_greek_to_latin = [('а', 'a'), ('А', 'A'), ('Α','A')]
+        content = message.content
+        for bad_letter, good_letter in cyrillic_greek_to_latin:
+            content = content.replace(bad_letter, good_letter)
+
+        if re.search(r'(?i)sha+rk', content):
             await message.channel.send(f'sh{"a"*random.randint(5,15)}rk')
             return
 
