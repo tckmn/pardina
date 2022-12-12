@@ -177,7 +177,6 @@ class DiscordFrontend(Frontend, discord.Client):
 
         if re.search(r'(?i)sha+rk', message.content):
             await message.channel.send(f'sh{"a"*random.randint(5,15)}rk')
-            return
 
         if re.search(r'(?i)buf+alo', message.content):
             thing = random.choice(os.listdir('buffalo'))
