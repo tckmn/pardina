@@ -8,6 +8,7 @@ import json
 import random
 import re
 import subprocess
+import os
 
 import sys
 isdebug = '-d' in sys.argv
@@ -177,6 +178,10 @@ class DiscordFrontend(Frontend, discord.Client):
         if re.search(r'(?i)sha+rk', message.content):
             await message.channel.send(f'sh{"a"*random.randint(5,15)}rk')
             return
+
+        if re.search(r'(?i)buf+alo', message.content):
+            thing = random.choice(os.listdir('buffalo'))
+            await message.channel.send(thing[3:-4].replace('_', ' '), file=discord.File('buffalo/'+thing))
 
         if m := re.match(r'(?i)roll\s*([-+*/\sd0-9()]+)$', message.content):
             try:
