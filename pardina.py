@@ -9,6 +9,8 @@ import random
 import re
 import subprocess
 import os
+import shutil
+import csv
 
 import sys
 isdebug = '-d' in sys.argv
@@ -22,6 +24,10 @@ def log(label, msg):
 emd = discord.utils.escape_markdown
 MON, TUE, WED, THU, FRI, SAT, SUN = range(7)
 WHERE_IS_THE_VAN = 0
+DAILY = 1
+
+quotes = list(csv.reader(open('quotesirl.csv')))[1:]
+lenpad = lambda x: x + ' ' * ((0 if len(x) > 20 else (20 - len(x)) * 2) + random.randrange(5))
 
 
 class Van:
@@ -70,8 +76,9 @@ class Frontend:
 
 class DiscordFrontend(Frontend, discord.Client):
     label = 'DISCORD'
-    cid_pub = 881689982635487314
+    cid_pub   = 881689982635487314
     cid_debug = 883708092603326505
+    cid_daily = 750960475734278194
     admin = [133105865908682752]
     buses = [ '🚌'
             , '🚐'
@@ -137,6 +144,8 @@ class DiscordFrontend(Frontend, discord.Client):
         discord.Client.__init__(self, intents=intents)
         self.silent = self.backend.debug
         self.whereid = None
+        self.wheredefault = None
+        self.quotesdone = []
         self.update_initials()
 
     async def go(self):
@@ -156,11 +165,11 @@ class DiscordFrontend(Frontend, discord.Client):
             for k,v in [[name, next((x for x in self.channel.guild.emojis if x.name == name), None)]]
             if v
         }
-        print(self.emojis)
 
     async def on_ready(self):
         self.channel_pub = self.get_channel(self.cid_pub)
         self.channel_debug = self.get_channel(self.cid_debug)
+        self.channel_daily = self.get_channel(self.cid_daily)
         self.set_channel()
         self.set_emojis()
         await self.backend.load()
@@ -254,6 +263,17 @@ class DiscordFrontend(Frontend, discord.Client):
             for floor in self.floors: await wheremsg.add_reaction(self.er(random.choice(floor)))
             self.whereid = wheremsg.id
 
+        elif mtype == DAILY:
+            with open('quotesorder') as f:
+                for line in f:
+                    qid = int(line.split(' ')[0])
+                    if qid not in self.quotesdone:
+                        self.quotesdone.append(qid)
+                        await self.channel_daily.send('QOTD (guess who said it!):\n' + ''.join(f'> {q[1]}\n- ||{lenpad(q[2])}||\n' for q in quotes if q[4] == str(qid)) + f'link: ||<https://discord.com/channels/684865442107359277/685208858427523139/{qid}>||')
+                        break
+                else:
+                    await self.channel_debug.send('ran out')
+
     async def admin_eval(self, args): return f'```\n{repr(eval(args))}\n```'
     async def admin_await(self, args): return f'```\n{repr(await eval(args))}\n```'
     async def admin_silent(self, args): self.silent = args == '1'; self.set_channel(); return f'silent: {self.silent}'
@@ -275,6 +295,12 @@ class DiscordFrontend(Frontend, discord.Client):
         else:
             await self.send_custom(WHERE_IS_THE_VAN, args)
             return 'asked where'
+    async def admin_genorder(self, args):
+        ids = list(set(q[4] for q in quotes))
+        random.shuffle(ids)
+        with open('quotesorder', 'w') as f:
+            f.write('\n'.join(str(x) + ' ' + '|'.join(q[1] for q in quotes if q[4] == x) for x in ids))
+        return 'done'
 
 
 class WebFrontend(Frontend):
@@ -346,6 +372,7 @@ class AutoFrontend(Frontend):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.read_schedule()
+        self.dailied = False
 
     def read_schedule(self, sched=None):
         self.schedule = [(lambda a,b,c,d:AutoVan(int(a),int(b),int(c),d))(*line.split(None, 3)) for line in (sched or open(dd('schedule')).read()).split('\n') if line.strip()]
@@ -356,8 +383,9 @@ class AutoFrontend(Frontend):
         while 1:
             d = datetime.now()
             day, hour, minute = d.weekday(), d.hour, d.minute
+
             for av in self.schedule:
-                if av.day == d.weekday() and av.hour == d.hour and av.minute == d.minute:
+                if av.day == day and av.hour == hour and av.minute == minute:
                     if not av.triggered:
                         if av.desc.startswith('WHERE'):
                             await self.send_custom(WHERE_IS_THE_VAN, av.desc[5:])
@@ -370,6 +398,14 @@ class AutoFrontend(Frontend):
                     av.triggered = True
                 else:
                     av.triggered = False
+
+            if hour == 22 and minute == 45:
+                if not self.dailied:
+                    await self.send_custom(DAILY, None)
+                    self.dailied = True
+            else:
+                self.dailied = False
+
             await asyncio.sleep(1)
 
     async def patch(self, desc):
@@ -406,11 +442,13 @@ class Backend():
         loop.run_forever()
 
     def save(self):
+        if os.path.exists(dd('db')): shutil.copyfile(dd('db'), dd('db.bkp'))
         with open(dd('db'), 'w') as f:
             json.dump({
                 'vans': [v.serialize(True) for v in self.vans],
                 'whereid': self.discord.whereid,
-                'wheredefault': self.discord.wheredefault
+                'wheredefault': self.discord.wheredefault,
+                'quotesdone': self.discord.quotesdone
             }, f)
 
     async def load(self):
@@ -421,6 +459,7 @@ class Backend():
                 self.maxvid = max((v.vid for v in self.vans), default=-1) + 1
                 self.discord.whereid = data['whereid']
                 self.discord.wheredefault = data['wheredefault']
+                self.discord.quotesdone = data['quotesdone']
                 # do this last because it takes time
                 for v in self.vans[-5:]:
                     try: v.msg = await self.discord.channel.fetch_message(v.msgid)
