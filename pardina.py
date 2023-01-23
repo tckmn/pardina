@@ -30,6 +30,17 @@ quotes = list(csv.reader(open('quotesirl.csv')))[1:]
 lenpad = lambda x: x + ' ' * ((0 if len(x) > 20 else (20 - len(x)) * 2) + random.randrange(5))
 
 
+helpmsg = '''```
+command                 where       desc
+help|commands           botspam     show this message
+activate [username]     botspam     give someone the active role
+alumnate [username]     botspam     remove the active role (and add alum)
+van [desc]              van-holds   make a van
+roll                    *           roll dice
+sq                      *           squares guessing game
+```'''
+
+
 class Van:
     def __init__(self, vid, desc, who, holdlist=None, msgid=None):
         self.vid = vid
@@ -76,9 +87,10 @@ class Frontend:
 
 class DiscordFrontend(Frontend, discord.Client):
     label = 'DISCORD'
-    cid_pub   = 881689982635487314
-    cid_debug = 883708092603326505
-    cid_daily = 750960475734278194
+    cid_pub     = 881689982635487314
+    cid_debug   = 883708092603326505
+    cid_daily   = 750960475734278194
+    cid_botspam = 684883664546431215
     admin = [133105865908682752]
     buses = [ '🚌'
             , '🚐'
@@ -172,6 +184,8 @@ class DiscordFrontend(Frontend, discord.Client):
         self.channel_daily = self.get_channel(self.cid_daily)
         self.set_channel()
         self.set_emojis()
+        self.role_active = self.channel_pub.guild.get_role(684865633049247825)
+        self.role_alum = self.channel_pub.guild.get_role(684870889799680029)
         await self.backend.load()
         self.log('started')
 
@@ -217,11 +231,26 @@ class DiscordFrontend(Frontend, discord.Client):
             await message.channel.send(f'```{before}```\n```{after}```\n||{answer}||')
             return
 
-        if message.channel.id not in [self.cid_pub, self.cid_debug]: return
+        if message.channel.id in [self.cid_botspam]:
+            msg = message.content.lower()
+            if msg.startswith('help') or msg.startswith('commands'):
+                await message.channel.send(helpmsg)
+            elif msg.startswith('activate') and self.role_active in message.author.roles:
+                user = next((user for user in self.channel.guild.members if user.name == msg.split(' ', 1)[1]), None)
+                if user:
+                    await user.add_roles(self.role_active, reason='activate')
+                    await message.channel.send('activated')
+            elif msg.startswith('alumnate') and self.role_active in message.author.roles:
+                user = next((user for user in self.channel.guild.members if user.name == msg.split(' ', 1)[1]), None)
+                if user:
+                    await user.remove_roles(self.role_active, reason='alumnate')
+                    await user.add_roles(self.role_alum, reason='alumnate')
+                    await message.channel.send('alumnated')
 
-        if message.content.lower().startswith('van'):
-            await self.send_new_van(re.sub(r'(?i)^van[: ]*', '', message.content) or '(no description)', self.uname(message.author))
-            await message.delete()
+        if message.channel.id in [self.cid_pub, self.cid_debug]:
+            if message.content.lower().startswith('van'):
+                await self.send_new_van(re.sub(r'(?i)^van[: ]*', '', message.content) or '(no description)', self.uname(message.author))
+                await message.delete()
 
     async def on_raw_reaction_add(self, ev): await self.on_react(ev, True)
     async def on_raw_reaction_remove(self, ev): await self.on_react(ev, False)
