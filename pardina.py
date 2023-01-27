@@ -31,7 +31,7 @@ lenpad = lambda x: x + ' ' * ((0 if len(x) > 20 else (20 - len(x)) * 2) + random
 
 
 helpmsg = '''```
-command                 where       desc
+COMMAND                 WHERE       DESCRIPTION
 help|commands           botspam     show this message
 activate [username]     botspam     give someone the active role
 alumnate [username]     botspam     remove the active role (and add alum)
@@ -86,12 +86,22 @@ class Frontend:
 
 
 class DiscordFrontend(Frontend, discord.Client):
+
     label = 'DISCORD'
     cid_pub     = 881689982635487314
     cid_debug   = 883708092603326505
     cid_daily   = 750960475734278194
     cid_botspam = 684883664546431215
     admin = [133105865908682752]
+
+    cmd_limits = {
+        'help': [cid_botspam],
+        'commands': [cid_botspam],
+        'activate': [cid_botspam],
+        'alumnate': [cid_botspam],
+        'van': [cid_pub, cid_debug]
+    }
+
     buses = [ '🚌'
             , '🚐'
             , '🚎'
@@ -108,6 +118,7 @@ class DiscordFrontend(Frontend, discord.Client):
              , [ '✡️', '❄️', '🌨️', '🔯' ]
              ]
     normal_buses = 4
+
     places = {
         '🧑‍✈️': 'the lot at 158 mass ave',
         '🇦🇱': 'albany street garage',
@@ -118,6 +129,7 @@ class DiscordFrontend(Frontend, discord.Client):
         # '🗽': '🇦🇱'
     }
     emojis = {}
+
     def er(self, e): return self.emojis.get(e, e) # reify
     def ec(self, e): return self.ec2(e if type(e) is str else e.name)
     def ec2(self, e): return self.coercions.get(e, e)
@@ -128,11 +140,9 @@ class DiscordFrontend(Frontend, discord.Client):
             (f' *(by {emd(van.who)})*' if van.who else '') + \
             (f' holding for **{emd(van.holds())}**' if van.holdlist else '')
     async def where(self):
-        if not self.whereid: return None
-        try:
-            wheremsg = await self.channel.fetch_message(self.whereid)
-        except:
-            return None
+        if not self.whereid: return
+        try: wheremsg = await self.channel.fetch_message(self.whereid)
+        except: return
         # ugh, python is incompetent and lacks let in comprehensions
         rlist = [(self.places[self.ec(r.emoji)], r.count)
                  for r in wheremsg.reactions
@@ -205,52 +215,15 @@ class DiscordFrontend(Frontend, discord.Client):
             thing = random.choice(os.listdir('buffalo'))
             await message.channel.send(thing[3:-4].replace('_', ' '), file=discord.File('buffalo/'+thing))
 
-        if m := re.match(r'(?i)roll\s*([-+*/\sd0-9()]+)$', message.content):
-            try:
-                res = eval(re.sub(r'(\d+)?d(\d+)',
-                                  lambda n: str(sum(random.randint(1, int(n.group(2))) for _ in range(int(n.group(1)) if n.group(1) else 1))),
-                                  m.group(1)))
-            except:
-                res = 'no'
-            await message.channel.send(res)
-            return
+        split = message.content.split(None, 1)
+        if not len(split): return
+        cmd = split[0].lower()
+        args = split[1] if len(split) > 1 else None
 
-        cl = message.content.lower()
-        if cl == 'sq' or cl.startswith('sq '):
-            args = cl.split()[1:]
-            levels = 'mainstream plus a1 a2 c1 c2 c3a c3 c3x c4a c4 c4x all'.split()
-            goodnum = lambda x: len(x) == 1 and x in '123456789'
-            subprocess.run([ './sq.sh'
-                           , ([x for x in args if x in levels]+['C2'])[0]
-                           , ([x for x in args if goodnum(x)]+['3'])[0]
-                           , 'level' if 'level' in args else 'random'
-                           ])
-            before = open('sq/before').read()
-            after = open('sq/after').read()
-            answer = open('sq/answer').read()
-            await message.channel.send(f'```{before}```\n```{after}```\n||{answer}||')
-            return
-
-        if message.channel.id in [self.cid_botspam]:
-            msg = message.content.lower()
-            if msg.startswith('help') or msg.startswith('commands'):
-                await message.channel.send(helpmsg)
-            elif msg.startswith('activate') and self.role_active in message.author.roles:
-                user = next((user for user in self.channel.guild.members if user.name == msg.split(' ', 1)[1]), None)
-                if user:
-                    await user.add_roles(self.role_active, reason='activate')
-                    await message.channel.send('activated')
-            elif msg.startswith('alumnate') and self.role_active in message.author.roles:
-                user = next((user for user in self.channel.guild.members if user.name == msg.split(' ', 1)[1]), None)
-                if user:
-                    await user.remove_roles(self.role_active, reason='alumnate')
-                    await user.add_roles(self.role_alum, reason='alumnate')
-                    await message.channel.send('alumnated')
-
-        if message.channel.id in [self.cid_pub, self.cid_debug]:
-            if message.content.lower().startswith('van'):
-                await self.send_new_van(re.sub(r'(?i)^van[: ]*', '', message.content) or '(no description)', self.uname(message.author))
-                await message.delete()
+        if hasattr(self, f'cmd_{cmd}') and (cmd not in self.cmd_limits or message.channel.id in self.cmd_limits[cmd]):
+            ret = await getattr(self, f'cmd_{cmd}')(message, args)
+            if ret is not None:
+                await message.channel.send(ret)
 
     async def on_raw_reaction_add(self, ev): await self.on_react(ev, True)
     async def on_raw_reaction_remove(self, ev): await self.on_react(ev, False)
@@ -330,6 +303,52 @@ class DiscordFrontend(Frontend, discord.Client):
         with open('quotesorder', 'w') as f:
             f.write('\n'.join(str(x) + ' ' + '|'.join(q[1] for q in quotes if q[4] == x) for x in ids))
         return 'done'
+
+    async def cmd_roll(self, message, args):
+        if args is None or not re.match(r'^[-+*/\sdD0-9()]+$', args): return
+        try:
+            return eval(re.sub(r'(\d+)?[dD](\d+)',
+                              lambda n: str(sum(random.randint(1, int(n.group(2))) for _ in range(int(n.group(1)) if n.group(1) else 1))),
+                              args))
+        except: pass
+
+    async def cmd_sq(self, message, args):
+        args = [] if args is None else args.lower().split()
+        levels = 'mainstream plus a1 a2 c1 c2 c3a c3 c3x c4a c4 c4x all'.split()
+        goodnum = lambda x: len(x) == 1 and x in '123456789'
+        subprocess.run([ './sq.sh'
+                       , ([x for x in args if x in levels]+['C2'])[0]
+                       , ([x for x in args if goodnum(x)]+['3'])[0]
+                       , 'level' if 'level' in args else 'random'
+                       ])
+        before = open('sq/before').read()
+        after = open('sq/after').read()
+        answer = open('sq/answer').read()
+        return f'```{before}```\n```{after}```\n||{answer}||'
+
+    async def cmd_help(self, message, args): return helpmsg
+    async def cmd_commands(self, message, args): return helpmsg
+
+    async def cmd_activate(self, message, args):
+        if args is None or self.role_active not in message.author.roles: return
+        if user := next((user for user in self.channel.guild.members if user.name.lower() == args.lower()), None):
+            await user.add_roles(self.role_active, reason='activate')
+            return 'activated'
+        else:
+            return 'user not found (maybe you gave a display name?)'
+
+    async def cmd_alumnate(self, message, args):
+        if args is None or self.role_active not in message.author.roles: return
+        if user := next((user for user in self.channel.guild.members if user.name.lower() == args.lower()), None):
+            await user.remove_roles(self.role_active, reason='alumnate')
+            await user.add_roles(self.role_alum, reason='alumnate')
+            return 'alumnated'
+        else:
+            return 'user not found (maybe you gave a display name?)'
+
+    async def cmd_van(self, message, args):
+        await self.send_new_van(args or '(no description)', self.uname(message.author))
+        await message.delete()
 
 
 class WebFrontend(Frontend):
