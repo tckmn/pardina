@@ -16,6 +16,7 @@ import sys
 isdebug = '-d' in sys.argv
 nodebug = lambda x: [] if isdebug else [x]
 dd = (lambda f: 'debugdata/'+f) if isdebug else (lambda f: 'data/'+f)
+wread = lambda f: open('web/'+f).read()
 logfile = open(dd('log'), 'a')
 def log(label, msg):
     s = f'{datetime.now().strftime("%F %T")} [{label}] {msg}'
@@ -353,7 +354,7 @@ class DiscordFrontend(Frontend, discord.Client):
 
 class WebFrontend(Frontend):
     label = 'WEB'
-    page = lambda *_: re.sub(r'\{\{([^}]*)\}\}', lambda m: open(m.group(1)).read(), open('pardina.html').read())
+    page = lambda *_: re.sub(r'\{\{([^}]*)\}\}', lambda m: wread(m.group(1)), wread('pardina.html'))
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -447,7 +448,7 @@ class AutoFrontend(Frontend):
                 else:
                     av.triggered = False
 
-            if hour == 22 and minute == 45:
+            if hour == 17 and minute == 34:
                 if not self.dailied:
                     await self.send_custom(DAILY, None)
                     self.dailied = True
