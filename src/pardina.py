@@ -15,7 +15,7 @@ import csv
 import sys
 isdebug = '-d' in sys.argv
 nodebug = lambda x: [] if isdebug else [x]
-dd = (lambda f: 'debugdata/'+f) if isdebug else (lambda f: 'data/'+f)
+dd = (lambda f: 'data/debug/'+f) if isdebug else (lambda f: 'data/prod/'+f)
 wread = lambda f: open('web/'+f).read()
 logfile = open(dd('log'), 'a')
 def log(label, msg):
