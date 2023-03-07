@@ -14,7 +14,7 @@ import csv
 
 import sys
 isdebug = '-d' in sys.argv
-nodebug = lambda x: [] if isdebug else [x]
+nodebug = lambda x: [] if isdebug else []
 dd = (lambda f: 'data/debug/'+f) if isdebug else (lambda f: 'data/prod/'+f)
 wread = lambda f: open('web/'+f).read()
 logfile = open(dd('log'), 'a')
@@ -26,6 +26,7 @@ emd = discord.utils.escape_markdown
 MON, TUE, WED, THU, FRI, SAT, SUN = range(7)
 WHERE_IS_THE_VAN = 0
 DAILY = 1
+HOURLY = 2
 
 quotes = list(csv.reader(open('quotesirl.csv')))[1:]
 lenpad = lambda x: x + ' ' * ((0 if len(x) > 20 else (20 - len(x)) * 2) + random.randrange(5))
@@ -92,6 +93,7 @@ class DiscordFrontend(Frontend, discord.Client):
     cid_pub     = 881689982635487314
     cid_debug   = 883708092603326505
     cid_daily   = 750960475734278194
+    cid_delete  = 892969775972642846
     cid_botspam = 684883664546431215
     admin = [133105865908682752]
 
@@ -162,8 +164,7 @@ class DiscordFrontend(Frontend, discord.Client):
 
     def __init__(self, *args, **kwargs):
         Frontend.__init__(self, *args, **kwargs)
-        intents = discord.Intents.default()
-        intents.members = True
+        intents = discord.Intents.all()
         discord.Client.__init__(self, intents=intents)
         self.silent = self.backend.debug
         self.whereid = None
@@ -193,12 +194,19 @@ class DiscordFrontend(Frontend, discord.Client):
         self.channel_pub = self.get_channel(self.cid_pub)
         self.channel_debug = self.get_channel(self.cid_debug)
         self.channel_daily = self.get_channel(self.cid_daily)
+        self.channel_delete = self.get_channel(self.cid_delete)
         self.set_channel()
         self.set_emojis()
         self.role_active = self.channel_pub.guild.get_role(684865633049247825)
         self.role_alum = self.channel_pub.guild.get_role(684870889799680029)
+        self.role_rainbow = self.channel_pub.guild.get_role(1082168144145174618)
+        self.role_duck = self.channel_pub.guild.get_role(684932837606031378)
         await self.backend.load()
         self.log('started')
+
+    async def on_member_join(self, member):
+        self.log('duckifying')
+        await member.add_roles(self.role_duck)
 
     async def on_message(self, message):
         if message.author == self.user: return
@@ -267,15 +275,38 @@ class DiscordFrontend(Frontend, discord.Client):
             self.whereid = wheremsg.id
 
         elif mtype == DAILY:
-            with open('quotesorder') as f:
-                for line in f:
-                    qid = int(line.split(' ')[0])
-                    if qid not in self.quotesdone:
-                        self.quotesdone.append(qid)
-                        await self.channel_daily.send('QOTD (guess who said it!):\n' + ''.join(f'> {q[1]}\n- ||{lenpad(q[2])}||\n' for q in quotes if q[4] == str(qid)) + f'link: ||<https://discord.com/channels/684865442107359277/685208858427523139/{qid}>||')
-                        break
-                else:
-                    await self.channel_debug.send('ran out')
+            await self.admin_guessquote()
+            await self.admin_deletions()
+
+        elif mtype == HOURLY:
+            await self.admin_rainbow()
+
+    async def admin_guessquote(self):
+        with open('quotesorder') as f:
+            for line in f:
+                qid = int(line.split(' ')[0])
+                if qid not in self.quotesdone:
+                    self.quotesdone.append(qid)
+                    await self.channel_daily.send('QOTD (guess who said it!):\n' + ''.join(f'> {q[1]}\n- ||{lenpad(q[2])}||\n' for q in quotes if q[4] == str(qid)) + f'link: ||<https://discord.com/channels/684865442107359277/685208858427523139/{qid}>||')
+                    break
+            else:
+                await self.channel_debug.send('ran out')
+
+    async def admin_deletions(self):
+        async for m in self.channel_delete.history(limit=None):
+            if (datetime.now() - m.created_at).days > 17 and m.id != 892970388693336095:
+                logged = 'autodelete ' + str([
+                    m.created_at,
+                    m.author,
+                    m.content,
+                    m.reactions
+                ])
+                await self.channel_debug.send(logged)
+                self.log(logged)
+                await m.delete()
+
+    async def admin_rainbow(self):
+        await self.role_rainbow.edit(color=discord.Colour.random())
 
     async def admin_eval(self, args): return f'```\n{repr(eval(args))}\n```'
     async def admin_await(self, args): return f'```\n{repr(await eval(args))}\n```'
@@ -344,6 +375,13 @@ class DiscordFrontend(Frontend, discord.Client):
             await user.remove_roles(self.role_active, reason='alumnate')
             await user.add_roles(self.role_alum, reason='alumnate')
             return 'alumnated'
+        else:
+            return 'user not found (maybe you gave a display name?)'
+
+    async def cmd_delete(self, message, args):
+        if args is None or self.role_active not in message.author.roles: return
+        if user := next((user for user in self.channel.guild.members if user.name.lower() == args.lower()), None):
+            return 'deleted'
         else:
             return 'user not found (maybe you gave a display name?)'
 
@@ -422,6 +460,7 @@ class AutoFrontend(Frontend):
         super().__init__(*args, **kwargs)
         self.read_schedule()
         self.dailied = False
+        self.hourlied = False
 
     def read_schedule(self, sched=None):
         self.schedule = [(lambda a,b,c,d:AutoVan(int(a),int(b),int(c),d))(*line.split(None, 3)) for line in (sched or open(dd('schedule')).read()).split('\n') if line.strip()]
@@ -448,12 +487,19 @@ class AutoFrontend(Frontend):
                 else:
                     av.triggered = False
 
-            if hour == 17 and minute == 34:
+            if hour == 17 and minute == 0:
                 if not self.dailied:
                     await self.send_custom(DAILY, None)
                     self.dailied = True
             else:
                 self.dailied = False
+
+            if minute == 0:
+                if not self.hourlied:
+                    await self.send_custom(HOURLY, None)
+                    self.hourlied = True
+            else:
+                self.hourlied = False
 
             await asyncio.sleep(1)
 
