@@ -202,6 +202,7 @@ class DiscordFrontend(Frontend, discord.Client):
         self.role_active = self.channel_pub.guild.get_role(684865633049247825)
         self.role_alum = self.channel_pub.guild.get_role(684870889799680029)
         self.role_rainbow = self.channel_pub.guild.get_role(1082168144145174618)
+        self.role_rainslow = self.channel_pub.guild.get_role(1082694499479859301)
         self.role_duck = self.channel_pub.guild.get_role(684932837606031378)
         await self.backend.load()
         self.log('started')
@@ -277,24 +278,25 @@ class DiscordFrontend(Frontend, discord.Client):
             self.whereid = wheremsg.id
 
         elif mtype == DAILY:
-            await self.admin_guessquote()
-            await self.admin_deletions()
+            await self.admin_guessquote(None)
+            await self.admin_deletions(None)
+            await self.admin_rainslow(None)
 
         elif mtype == HOURLY:
-            await self.admin_rainbow()
+            await self.admin_rainbow(None)
 
-    async def admin_guessquote(self):
+    async def admin_guessquote(self, args):
         with open('quotesorder') as f:
             for line in f:
                 qid = int(line.split(' ')[0])
                 if qid not in self.quotesdone:
                     self.quotesdone.append(qid)
-                    await self.channel_daily.send('QOTD (guess who said it!):\n' + ''.join(f'> {q[1]}\n- ||{lenpad(q[2])}||\n' for q in quotes if q[4] == str(qid)) + f'link: ||<https://discord.com/channels/684865442107359277/685208858427523139/{qid}>||')
+                    await self.channel_daily.send('QOTD (guess who said it!):\n' + ''.join(f'> {q[1]}\n– ||{lenpad(q[2])}||\n' for q in quotes if q[4] == str(qid)) + f'link: ||<https://discord.com/channels/684865442107359277/685208858427523139/{qid}>||')
                     break
             else:
                 await self.channel_debug.send('ran out')
 
-    async def admin_deletions(self):
+    async def admin_deletions(self, args):
         async for m in self.channel_delete.history(limit=None):
             if (datetime.now() - m.created_at).days > 17 and m.id != 892970388693336095:
                 logged = 'autodelete ' + str([
@@ -307,7 +309,10 @@ class DiscordFrontend(Frontend, discord.Client):
                 self.log(logged)
                 await m.delete()
 
-    async def admin_rainbow(self):
+    async def admin_rainslow(self, args):
+        await self.role_rainslow.edit(color=discord.Colour.random())
+
+    async def admin_rainbow(self, args):
         await self.role_rainbow.edit(color=discord.Colour.random())
 
     async def admin_eval(self, args): return f'```\n{repr(eval(args))}\n```'
@@ -507,7 +512,7 @@ class AutoFrontend(Frontend):
 
     async def patch(self, desc):
         where = await self.backend.discord.where()
-        prep = '' if where.startswith('beneath') else 'at '
+        prep = '' if where and where.startswith('beneath') else 'at '
         holds = None if where is None else \
             ', holds between buildings 39 and 24 by default' if 'albany' in where else \
             ', holds at the lot at 158 mass ave by default' if 'lot' in where else ''
