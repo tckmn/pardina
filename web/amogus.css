@@ -1,0 +1,31 @@
+html,body {
+    background-color: #115;
+    color: #dfd;
+    text-align: center;
+    font: 35pt sans-serif;
+    margin: 0;
+    padding: 0;
+}
+
+button {
+    color: #dfd;
+    font: 20pt sans-serif;
+}
+
+main {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-around;
+    width: 100vw;
+    height: 100vh;
+}
+
+main > * {
+    display: flex;
+    justify-content: center;
+}
+
+#timer { font-size: 50pt }
+#btns > * { flex: 1; height: 50pt }
+#sab { background-color: #511; }
+#fix { background-color: #151; }
