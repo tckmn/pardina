@@ -62,6 +62,15 @@ class Van:
     def deserialize(obj):
         return Van(obj['vid'], obj['desc'], obj['who'], obj['holdlist'], obj['msgid'])
 
+class Rushee:
+    def __init__(self, ridx, name):
+        self.ridx = ridx
+        self.name = name
+    def serialize(self, full=False):
+        return { 'ridx': ridx, 'name': self.name }
+    def deserialize(obj):
+        return Rushee(obj['ridx'], obj['name'])
+
 
 class AutoVan:
     def __init__(self, day, hour, minute, desc):
@@ -84,11 +93,14 @@ class Frontend:
     async def send_new_van(self, desc, who): return await self.backend.send_new_van(self, desc, who)
     async def send_del_van(self, vid): return await self.backend.send_del_van(self, vid)
     async def send_hold_van(self, van, who, isadd): return await self.backend.send_hold_van(self, van, who, isadd)
+    async def send_new_rushee(self, name): return await self.backend.send_new_rushee(self, name)
+    async def send_file_rushee(self, ridx, filing): return await self.backend.send_file_rushee(self, ridx, filing)
     async def send_custom(self, mtype, data): return await self.backend.send_custom(self, mtype, data)
 
     async def recv_new_van(self, van): pass
     async def recv_del_van(self, van): pass
     async def recv_update_van(self, van): pass
+    async def recv_new_rushee(self, name): pass
     async def recv_custom(self, mtype, data): pass
 
 
@@ -103,6 +115,12 @@ class DiscordFrontend(Frontend, discord.Client):
     cid_amogus  = 1172758960357519390
     admin = [133105865908682752]
 
+    rushchairs = [
+        133105865908682752
+    ]
+    machinees = [
+        133105865908682752
+    ]
     pullers = [
         133105865908682752, 400379745730297866
     ]
@@ -144,6 +162,12 @@ class DiscordFrontend(Frontend, discord.Client):
         # '🗽': '🇦🇱'
     }
     emojis = {}
+
+    filings = [ '👍'
+              , '🤷'
+              , '👎'
+              , '❌'
+              ]
 
     def er(self, e): return self.emojis.get(e, e) # reify
     def ec(self, e): return self.ec2(e if type(e) is str else e.name)
@@ -259,6 +283,7 @@ class DiscordFrontend(Frontend, discord.Client):
     async def on_raw_reaction_remove(self, ev): await self.on_react(ev, False)
 
     async def on_react(self, ev, isadd):
+        # print(ev)
         if ev.user_id == self.user.id or ev.emoji.name not in self.buses: return
         v = self.backend.by_msgid(ev.message_id)
         if not v: return
@@ -282,6 +307,12 @@ class DiscordFrontend(Frontend, discord.Client):
     async def recv_update_van(self, van):
         if van.msg: await van.msg.edit(content=await self.fmt(van))
         else: self.log(f'van {van.vid} tried to update with no msg')
+
+    async def recv_new_rushee(self, rushee):
+        for uid in self.machinees:
+            msg = await self.get_user(uid).send(f'||file on rushee: {rushee.name}||')
+            for filing in self.filings:
+                await msg.add_reaction(filing)
 
     async def recv_custom(self, mtype, data):
         if mtype == WHERE_IS_THE_VAN:
@@ -603,6 +634,7 @@ class Backend():
                          ][1:]
         self.maxvid = 0
         self.vans = []
+        self.rushees = []
 
     def go(self):
         loop = asyncio.get_event_loop()
@@ -614,6 +646,7 @@ class Backend():
         with open(dd('db'), 'w') as f:
             json.dump({
                 'vans': [v.serialize(True) for v in self.vans],
+                'rushees': [r.serialize(True) for r in self.rushees],
                 'whereid': self.discord.whereid,
                 'wheredefault': self.discord.wheredefault,
                 'quotesdone': self.discord.quotesdone
@@ -624,6 +657,7 @@ class Backend():
             with open(dd('db')) as f:
                 data = json.load(f)
                 self.vans = [Van.deserialize(v) for v in data['vans']]
+                self.rushees = [Rushee.deserialize(r) for r in data['rushees']]
                 self.maxvid = max((v.vid for v in self.vans), default=-1) + 1
                 self.discord.whereid = data['whereid']
                 self.discord.wheredefault = data['wheredefault']
@@ -661,6 +695,14 @@ class Backend():
         if (who in van.holdlist) == isadd: return self.warn('hold with no effect?')
         van.holdlist.append(who) if isadd else van.holdlist.remove(who)
         await asyncio.gather(*(f.recv_update_van(van) for f in self.frontends))
+        self.save()
+
+    async def send_new_rushee(self, sender, name):
+        self.log(f'new rushee: {name}')
+        ridx = len(self.rushees)
+        rushee = Rushee(ridx, name)
+        self.rushees.append(rushee)
+        await asyncio.gather(*(f.recv_new_rushee(rushee) for f in self.frontends))
         self.save()
 
     async def send_custom(self, sender, mtype, data):
