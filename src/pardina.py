@@ -10,6 +10,7 @@ import re
 import subprocess
 import os
 import shutil
+import time
 import csv
 
 import sys
@@ -28,7 +29,11 @@ WHERE_IS_THE_VAN = 0
 DAILY = 1
 HOURLY = 2
 
-quotes = list(csv.reader(open('quotesirl.csv')))[1:]
+qhead, *quotes = list(csv.reader(open('quotesirl.csv')))
+Q_QUOTE = qhead.index('quote')
+Q_QUOTEE = qhead.index('quotee')
+Q_COMM = qhead.index('qomments')
+Q_ID = qhead.index('id')
 lenpad = lambda x: x + ' ' * ((0 if len(x) > 20 else (20 - len(x)) * 2) + random.randrange(5))
 
 
@@ -95,7 +100,12 @@ class DiscordFrontend(Frontend, discord.Client):
     cid_daily   = 750960475734278194
     cid_delete  = 892969775972642846
     cid_botspam = 684883664546431215
+    cid_amogus  = 1172758960357519390
     admin = [133105865908682752]
+
+    pullers = [
+        133105865908682752, 400379745730297866
+    ]
 
     cmd_limits = {
         'help': [cid_botspam],
@@ -197,6 +207,8 @@ class DiscordFrontend(Frontend, discord.Client):
         self.channel_debug = self.get_channel(self.cid_debug)
         self.channel_daily = self.get_channel(self.cid_daily)
         self.channel_delete = self.get_channel(self.cid_delete)
+        self.channel_botspam = self.get_channel(self.cid_botspam)
+        self.channel_amogus = self.get_channel(self.cid_amogus)
         self.set_channel()
         self.set_emojis()
         self.role_active = self.channel_pub.guild.get_role(684865633049247825)
@@ -213,6 +225,12 @@ class DiscordFrontend(Frontend, discord.Client):
 
     async def on_message(self, message):
         if message.author == self.user: return
+
+        if isinstance(message.channel, discord.DMChannel):
+            if message.author.id in self.pullers and message.content == 'pull':
+                await message.channel.send('```\n'+subprocess.check_output('cd ~/code/py/mafia; git pull; pkill -f "0.0.0.0 7148"', stderr=subprocess.STDOUT, shell=True).decode()+'\n```')
+            else:
+                await self.channel_botspam.send('banana bread')
 
         if message.author.id in self.admin and message.content.startswith('!'):
             cmd, *args = message.content[1:].split(None, 1)
@@ -290,8 +308,9 @@ class DiscordFrontend(Frontend, discord.Client):
             for line in f:
                 qid = int(line.split(' ')[0])
                 if qid not in self.quotesdone:
+                    await self.channel_daily.send('QOTD (guess who said it!):\n' + ''.join(f'> {q[Q_QUOTE]}\n– ||{lenpad(q[Q_QUOTEE])}||{", "+q[Q_COMM] if q[Q_COMM] else ""}\n' for q in quotes if q[Q_ID] == str(qid)) + f'link: ||<https://discord.com/channels/684865442107359277/685208858427523139/{qid}>||')
                     self.quotesdone.append(qid)
-                    await self.channel_daily.send('QOTD (guess who said it!):\n' + ''.join(f'> {q[1]}\n– ||{lenpad(q[2])}||\n' for q in quotes if q[4] == str(qid)) + f'link: ||<https://discord.com/channels/684865442107359277/685208858427523139/{qid}>||')
+                    self.backend.save()
                     break
             else:
                 await self.channel_debug.send('ran out')
@@ -337,11 +356,22 @@ class DiscordFrontend(Frontend, discord.Client):
             await self.send_custom(WHERE_IS_THE_VAN, args)
             return 'asked where'
     async def admin_genorder(self, args):
-        ids = list(set(q[4] for q in quotes))
+        ids = list(set(q[Q_ID] for q in quotes))
         random.shuffle(ids)
         with open('quotesorder', 'w') as f:
-            f.write('\n'.join(str(x) + ' ' + '|'.join(q[1] for q in quotes if q[4] == x) for x in ids))
+            f.write('\n'.join(str(x) + ' ' + '|'.join(q[Q_QUOTE] for q in quotes if q[Q_ID] == x) for x in ids))
         return 'done'
+    async def admin_vieworder(self, args):
+        ret = ''
+        n = 0
+        with open('quotesorder') as f:
+            for line in f:
+                qid = int(line.split(' ')[0])
+                if qid not in self.quotesdone:
+                    ret += line
+                    n += 1
+                    if n >= 5: return ret
+        return ret
 
     async def cmd_roll(self, message, args):
         if args is None or not re.match(r'^[-+*/\sdD0-9()]+$', args): return
@@ -396,10 +426,18 @@ class DiscordFrontend(Frontend, discord.Client):
         await self.send_new_van(args or '(no description)', self.uname(message.author))
         await message.delete()
 
+    async def cmd_add(self, message, args):
+        if args is None or message.author.id not in self.rushchairs or type(message.channel) is not discord.channel.DMChannel: return
+        await self.send_new_rushee(args)
+        return 'added new rushee'
+
 
 class WebFrontend(Frontend):
     label = 'WEB'
-    page = lambda *_: re.sub(r'\{\{([^}]*)\}\}', lambda m: wread(m.group(1)), wread('pardina.html'))
+    page = lambda self, f: re.sub(r'\{\{([^}]*)\}\}', lambda m: wread(m.group(1)), wread(f))
+
+    pressers = set()
+    endtime = 0
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -439,17 +477,45 @@ class WebFrontend(Frontend):
                 'type': 'set',
                 'vans': [v.serialize() for v in self.backend.vans]
             }))
+            await ws.send_str(json.dumps({ 'type': 'reactor', 'endtime': self.endtime }))
+
             async for msg in ws:
                 self.log(f'websocket {wsid} sent {msg.data}')
                 data = json.loads(msg.data)
+
                 if data['type'] == 'hold':
                     await self.send_hold_van(next(v for v in self.backend.vans if v.vid == data['vid']), data['who'], data['isadd'])
+
+                elif data['type'] == 'reactor':
+                    disc = True
+                    if data['action'] == 'start' and self.endtime == 0:
+                        self.pressers = set()
+                        self.endtime = time.time()+60
+                        await self.broadcast({ 'type': 'reactor', 'endtime': self.endtime })
+                        if disc: await self.backend.discord.channel_amogus.send('reactor started')
+                    elif data['action'] == 'press':
+                        self.pressers.add(wsid)
+                        if len(self.pressers) > 1 and self.endtime > time.time():
+                            self.endtime = 0
+                            await self.broadcast({ 'type': 'reactor', 'endtime': self.endtime })
+                            if disc: await self.backend.discord.channel_amogus.send('reactor defused')
+                    elif data['action'] == 'release':
+                        self.pressers.remove(wsid)
+                    elif data['action'] == 'explode' and self.endtime != 0:
+                        self.endtime = 0
+                        await self.broadcast({ 'type': 'reactor', 'endtime': self.endtime, 'explode': 1 })
+                        if disc: await self.backend.discord.channel_amogus.send('reactor exploded')
+
             if ws in self.ws: self.ws.remove(ws)
             self.log(f'websocket {wsid} closed')
             return
 
         if req.method == 'GET':
-            return web.Response(text=self.page(), content_type='text/html')
+            if req.path == '/amogus':
+                return web.Response(text=self.page('amogus.html'), content_type='text/html')
+            if req.path == '/boom.mp3':
+                return web.FileResponse('web/boom.mp3')
+            return web.Response(text=self.page('pardina.html'), content_type='text/html')
 
         return web.Response(text='hi')
 
@@ -513,10 +579,10 @@ class AutoFrontend(Frontend):
     async def patch(self, desc):
         where = await self.backend.discord.where()
         prep = '' if where and where.startswith('beneath') else 'at '
-        holds = None if where is None else \
+        holds = None if where is None or 'holds' in desc else \
             ', holds between buildings 39 and 24 by default' if 'albany' in where else \
             ', holds at the lot at 158 mass ave by default' if 'lot' in where else ''
-        return (f'{desc}{holds}', f'*the van is {prep}{where}*') if where else (desc, None)
+        return (f'{desc}{holds or ""}', f'*the van is {prep}{where}*') if where else (desc, None)
         # return (f'{desc} from {where}', holds) if where else (desc, None)
 
 
