@@ -14,7 +14,7 @@ import time
 import csv
 import sqlite3
 
-ROOT = '/home/tckmn/code/web/pardina' # TODO
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # import sys
 # isdebug = '-d' in sys.argv
