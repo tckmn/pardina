@@ -12,12 +12,16 @@ import os
 import shutil
 import time
 import csv
+import sqlite3
 
-import sys
-isdebug = '-d' in sys.argv
+ROOT = '/home/tckmn/code/web/pardina' # TODO
+
+# import sys
+# isdebug = '-d' in sys.argv
+isdebug = False # TODO
 nodebug = lambda x: [] if isdebug else []
-dd = (lambda f: 'data/debug/'+f) if isdebug else (lambda f: 'data/prod/'+f)
-wread = lambda f: open('web/'+f).read()
+dd = (lambda f: f'{ROOT}/data/debug/{f}') if isdebug else (lambda f: f'{ROOT}/data/prod/{f}')
+wread = lambda f: open(f'{ROOT}/web/{f}').read()
 logfile = open(dd('log'), 'a')
 def log(label, msg):
     s = f'{datetime.now().strftime("%F %T")} [{label}] {msg}'
@@ -29,7 +33,7 @@ WHERE_IS_THE_VAN = 0
 DAILY = 1
 HOURLY = 2
 
-qhead, *quotes = list(csv.reader(open('quotesirl.csv')))
+qhead, *quotes = list(csv.reader(open(f'{ROOT}/quotesirl.csv')))
 Q_QUOTE = qhead.index('quote')
 Q_QUOTEE = qhead.index('quotee')
 Q_COMM = qhead.index('qomments')
@@ -107,6 +111,13 @@ class DiscordFrontend(Frontend, discord.Client):
         133105865908682752, 400379745730297866
     ]
 
+    rushmoji = {
+        '❤': 'b',
+        '👍': 'n',
+        '👎': 'w',
+        '☠': 'f'
+    }
+
     cmd_limits = {
         'help': [cid_botspam],
         'commands': [cid_botspam],
@@ -128,7 +139,7 @@ class DiscordFrontend(Frontend, discord.Client):
              , [ *nodebug('bigc'), *nodebug('bi'), *nodebug('pan'), '🍡', '☘️', '🇮🇲', '🤟', '🚦', '💦', '🫧', '🫐', '🧆', '🍢', '🍨', '🫘', '🥉', '☢️', '☣️', '♨️', '♻️', '💤', '🎶', '🔊', '⚧' ]
              , [ *nodebug('cflatmajorl'), *nodebug('ace'), *nodebug('enby'), '🍀', '☠️', '💅', '🦋', '✨', '🪟', '🌥️', '☔', '🛟', '🎛️', '💢', '❌', '❎', '💐' ]
              , [ *nodebug('aro'), '💫', '🖐️', '🌟', '🇻🇳', '🌿', '⭐', '⛅', '🛞', '💮', '🇲🇲', '🇭🇰', '🏳️‍⚧️', '🇸🇨', '🎼' ]
-             , [ *nodebug('completion'), '✡️', '❄️', '🌨️', '🔯', '*️⃣', '🍕', '⚛️', '🏳️‍🌈' ] 
+             , [ *nodebug('completion'), '✡️', '❄️', '🌨️', '🔯', '*️⃣', '🍕', '⚛️', '🏳️‍🌈' ]
              , [ *nodebug('multiocularo'), '🌧️', '🍇', '🎰', '🐞', '🧬', '📏' ]
              , [ '✳️', '❇️', '🪢', '🕸️', '☀️', '🎱', '🚨', '☸️', '🛑', '🔅', '🔆', '🔝', '🇲🇰' ]
              ]
@@ -182,13 +193,17 @@ class DiscordFrontend(Frontend, discord.Client):
         self.whereid = None
         self.wheredefault = None
         self.quotesdone = []
+        self.machine = {}
+        self.rushcon = sqlite3.connect(f'{ROOT}/ET-Machine/db.sqlite3', check_same_thread=False)
+        self.rushdb = self.rushcon.cursor()
         self.update_initials()
 
     async def go(self):
-        return await self.start(open(dd('token')).read())
+        await self.start(open(dd('token')).read())
 
     def update_initials(self):
         self.initials = eval(open(dd('initials')).read())
+        self.machiners = eval(open(dd('machiners')).read())
         return len(self.initials)
 
     def set_channel(self):
@@ -259,6 +274,7 @@ class DiscordFrontend(Frontend, discord.Client):
     async def on_raw_reaction_remove(self, ev): await self.on_react(ev, False)
 
     async def on_react(self, ev, isadd):
+        if str(ev.message_id) in self.machine: return await self.machine_react(ev, isadd)
         if ev.user_id == self.user.id or ev.emoji.name not in self.buses: return
         v = self.backend.by_msgid(ev.message_id)
         if not v: return
@@ -304,10 +320,11 @@ class DiscordFrontend(Frontend, discord.Client):
             await self.admin_rainbow(None)
 
     async def admin_guessquote(self, args):
-        with open('quotesorder') as f:
+        with open(f'{ROOT}/quotesorder') as f:
             for line in f:
                 qid = int(line.split(' ')[0])
                 if qid not in self.quotesdone:
+                    # await self.channel_daily.send('QOTD (guess who said it!):\n' + ''.join(f'> {q[Q_QUOTE]}\n– ||{lenpad(q[Q_QUOTEE])}||{", "+q[Q_COMM] if q[Q_COMM] else ""}\n' for q in quotes if q[Q_ID] == str(qid)) + f'link: ||<https://discord.com/channels/684865442107359277/685208858427523139/{qid}>||' + (' <@832044412225847326>' if datetime.now().weekday() < 5 else ''))
                     await self.channel_daily.send('QOTD (guess who said it!):\n' + ''.join(f'> {q[Q_QUOTE]}\n– ||{lenpad(q[Q_QUOTEE])}||{", "+q[Q_COMM] if q[Q_COMM] else ""}\n' for q in quotes if q[Q_ID] == str(qid)) + f'link: ||<https://discord.com/channels/684865442107359277/685208858427523139/{qid}>||')
                     self.quotesdone.append(qid)
                     self.backend.save()
@@ -317,7 +334,7 @@ class DiscordFrontend(Frontend, discord.Client):
 
     async def admin_deletions(self, args):
         async for m in self.channel_delete.history(limit=None):
-            if (datetime.now() - m.created_at).days > 17 and m.id != 892970388693336095:
+            if (datetime.now(m.created_at.tzinfo) - m.created_at).days > 17 and m.id != 892970388693336095:
                 logged = 'autodelete ' + str([
                     m.created_at,
                     m.author,
@@ -358,13 +375,13 @@ class DiscordFrontend(Frontend, discord.Client):
     async def admin_genorder(self, args):
         ids = list(set(q[Q_ID] for q in quotes))
         random.shuffle(ids)
-        with open('quotesorder', 'w') as f:
+        with open(f'{ROOT}/quotesorder', 'w') as f:
             f.write('\n'.join(str(x) + ' ' + '|'.join(q[Q_QUOTE] for q in quotes if q[Q_ID] == x) for x in ids))
         return 'done'
     async def admin_vieworder(self, args):
         ret = ''
         n = 0
-        with open('quotesorder') as f:
+        with open(f'{ROOT}/quotesorder') as f:
             for line in f:
                 qid = int(line.split(' ')[0])
                 if qid not in self.quotesdone:
@@ -431,6 +448,22 @@ class DiscordFrontend(Frontend, discord.Client):
         await self.send_new_rushee(args)
         return 'added new rushee'
 
+    async def machine_new(self, rname, rid):
+        for machiner in self.machiners.keys():
+            msg = await (await self.fetch_user(machiner)).send(f'||file on {rname}||')
+            self.machine[str(msg.id)] = rid
+            self.backend.save()
+            for r in self.rushmoji.keys(): await msg.add_reaction(r)
+
+    async def machine_react(self, ev, isadd):
+        stype = self.rushmoji[ev.emoji.name]
+        sactive = self.machiners[ev.user_id]
+        srushee = self.machine[str(ev.message_id)]
+        if stype is None or sactive is None or srushee is None: return
+        self.rushdb.execute('delete from rush_filing where active_id=? and rushee_id=?', (sactive, srushee))
+        if isadd:
+            self.rushdb.execute('insert into rush_filing (type, active_id, rushee_id) values (?, ?, ?)', (stype, sactive, srushee))
+        self.rushcon.commit()
 
 class WebFrontend(Frontend):
     label = 'WEB'
@@ -541,40 +574,47 @@ class AutoFrontend(Frontend):
 
     async def go(self):
         self.log('started')
+        sleeptime = 1
         while 1:
-            d = datetime.now()
-            day, hour, minute = d.weekday(), d.hour, d.minute
+            try:
+                d = datetime.now()
+                day, hour, minute = d.weekday(), d.hour, d.minute
 
-            for av in self.schedule:
-                if av.day == day and av.hour == hour and av.minute == minute:
-                    if not av.triggered:
-                        if av.desc.startswith('WHERE'):
-                            await self.send_custom(WHERE_IS_THE_VAN, av.desc[5:])
-                        else:
-                            desc, warning = await self.patch(av.desc)
-                            # await self.send_new_van(desc, None)
-                            # if False and warning: await self.backend.discord.channel.send(f'⚠️🚨⚠️ {warning} 🚨⚠️🚨')
-                            if warning: await self.backend.discord.channel.send(warning)
-                            await self.send_new_van(desc, None)
-                    av.triggered = True
+                for av in self.schedule:
+                    if av.day == day and av.hour == hour and av.minute == minute:
+                        if not av.triggered:
+                            if av.desc.startswith('WHERE'):
+                                await self.send_custom(WHERE_IS_THE_VAN, av.desc[5:])
+                            else:
+                                desc, warning = await self.patch(av.desc)
+                                # await self.send_new_van(desc, None)
+                                # if False and warning: await self.backend.discord.channel.send(f'⚠️🚨⚠️ {warning} 🚨⚠️🚨')
+                                if warning: await self.backend.discord.channel.send(warning)
+                                await self.send_new_van(desc, None)
+                        av.triggered = True
+                    else:
+                        av.triggered = False
+
+                if hour == 17 and minute == 0:
+                    if not self.dailied:
+                        await self.send_custom(DAILY, None)
+                        self.dailied = True
                 else:
-                    av.triggered = False
+                    self.dailied = False
 
-            if hour == 17 and minute == 0:
-                if not self.dailied:
-                    await self.send_custom(DAILY, None)
-                    self.dailied = True
-            else:
-                self.dailied = False
+                if minute == 0:
+                    if not self.hourlied:
+                        await self.send_custom(HOURLY, None)
+                        self.hourlied = True
+                else:
+                    self.hourlied = False
 
-            if minute == 0:
-                if not self.hourlied:
-                    await self.send_custom(HOURLY, None)
-                    self.hourlied = True
-            else:
-                self.hourlied = False
+                sleeptime = 1
+            except:
+                sleeptime *= 1.5
+                self.log(f'caught exception, sleeping {sleeptime}')
 
-            await asyncio.sleep(1)
+            await asyncio.sleep(sleeptime)
 
     async def patch(self, desc):
         where = await self.backend.discord.where()
@@ -604,8 +644,13 @@ class Backend():
         self.maxvid = 0
         self.vans = []
 
-    def go(self):
-        loop = asyncio.get_event_loop()
+    def go(self, newloop=False):
+        if newloop:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        else:
+            loop = asyncio.get_event_loop()
+        self.loop = loop
         for f in self.frontends: loop.create_task(f.go())
         loop.run_forever()
 
@@ -616,7 +661,8 @@ class Backend():
                 'vans': [v.serialize(True) for v in self.vans],
                 'whereid': self.discord.whereid,
                 'wheredefault': self.discord.wheredefault,
-                'quotesdone': self.discord.quotesdone
+                'quotesdone': self.discord.quotesdone,
+                'machine': self.discord.machine
             }, f)
 
     async def load(self):
@@ -628,6 +674,7 @@ class Backend():
                 self.discord.whereid = data['whereid']
                 self.discord.wheredefault = data['wheredefault']
                 self.discord.quotesdone = data['quotesdone']
+                self.discord.machine = data['machine']
                 # do this last because it takes time
                 for v in self.vans[-5:]:
                     try: v.msg = await self.discord.channel.fetch_message(v.msgid)
@@ -668,5 +715,8 @@ class Backend():
         await asyncio.gather(*(f.recv_custom(mtype, data) for f in self.frontends))
         self.save()
 
+    def machine_new(self, rname, rid): self.loop.create_task(self.discord.machine_new(rname, rid))
 
-Backend(isdebug).go()
+
+if __name__ == '__main__':
+    Backend(isdebug).go()
